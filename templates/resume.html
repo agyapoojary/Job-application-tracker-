@@ -1,30 +1,117 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="page-head"><div><h1>AI Resume Analyzer</h1><p>Upload your resume and paste a job description for AI-powered feedback.</p></div></section>
-<section class="two-col">
-  <form class="panel" method="post" enctype="multipart/form-data">
-    <h2>Upload Resume</h2>
-    <label class="upload-box"><i data-lucide="upload-cloud"></i><strong>Upload your resume PDF</strong><span id="resumeFileName">PDF and TXT files are read automatically.</span><input id="resumeFileInput" type="file" name="resume" accept=".pdf,.txt"></label>
-    <label>Resume Text<textarea name="resume_text" placeholder="Optional: paste resume text here if your PDF is scanned or image-based...">{{ resume_text }}</textarea></label>
-    <label>Job Description<textarea name="job_description" placeholder="Paste the job description here...">{{ job_description }}</textarea></label>
-    <button class="primary-btn" type="submit"><i data-lucide="sparkles"></i>Analyze with AI</button>
-  </form>
-  <article class="panel">
-    {% if analysis %}
-    <h2>Resume Score</h2>
-    <p class="muted">Analyzed: {{ analysis.filename }}</p>
-    <p class="analysis-note">{{ analysis.extraction_note }}</p>
-    <div class="score-line"><span>Words Read</span><b>{{ analysis.word_count }}</b></div>
-    <div class="score-line"><span>ATS Compatibility</span><b>{{ analysis.ats_score }}%</b></div><div class="bar"><b style="width:{{ analysis.ats_score }}%"></b></div>
-    <div class="score-line"><span>Resume Quality</span><b>{{ analysis.score }}%</b></div><div class="bar"><b style="width:{{ analysis.score }}%"></b></div>
-    <div class="score-line"><span>Keyword Match</span><b>{{ analysis.keyword_score }}%</b></div><div class="bar"><b style="width:{{ analysis.keyword_score }}%"></b></div>
-    <h3>Strengths</h3><ul>{% for item in analysis.strengths %}<li>{{ item }}</li>{% endfor %}</ul>
-    <h3>Matched Skills</h3><div class="chip-row">{% for skill in analysis.matched %}<span>{{ skill }}</span>{% else %}<span>No exact matches found yet</span>{% endfor %}</div>
-    <h3>Missing Skills</h3><div class="chip-row">{% for skill in analysis.missing %}<span>{{ skill }}</span>{% endfor %}</div>
-    <h3>Suggestions</h3><ul>{% for item in analysis.suggestions %}<li>{{ item }}</li>{% endfor %}</ul>
-    {% else %}
-    <div class="empty-state"><i data-lucide="file-text"></i><strong>Upload your resume to see AI analysis</strong><span>Get scores, missing skills, and personalized suggestions.</span></div>
-    {% endif %}
+<section class="page-head">
+  <div>
+    <h1>AI Resume Analyzer</h1>
+    <p>Upload a resume, paste the job description, and get Gemini-powered ATS feedback without leaving the page.</p>
+  </div>
+</section>
+
+<form class="resume-analyzer" id="resumeAnalysisForm" enctype="multipart/form-data">
+  <section class="resume-input-grid">
+    <article class="panel">
+      <div class="panel-head">
+        <h2>Resume</h2>
+        <span class="soft-badge">PDF, DOCX, TXT</span>
+      </div>
+      <label class="upload-box drop-zone" id="resumeDropZone">
+        <i data-lucide="upload-cloud"></i>
+        <strong>Drag and drop your resume</strong>
+        <span id="resumeFileName">or browse a file from your computer</span>
+        <input id="resumeFileInput" type="file" name="resume" accept=".pdf,.docx,.txt">
+      </label>
+      <label>Optional resume paste
+        <textarea name="resume_text" rows="8" placeholder="Paste resume text here if your file is scanned or image-based."></textarea>
+      </label>
+    </article>
+
+    <article class="panel">
+      <div class="panel-head">
+        <h2>Paste Job Description</h2>
+        <span class="soft-badge">Required</span>
+      </div>
+      <label>Paste Job Description
+        <textarea class="job-description-area" name="job_description" required placeholder="Paste the full job description here. Include responsibilities, requirements, and preferred skills."></textarea>
+      </label>
+    </article>
+  </section>
+
+  <div class="analyze-bar">
+    <button class="primary-btn large-btn" id="analyzeResumeBtn" type="submit"><i data-lucide="sparkles"></i>Analyze Resume</button>
+  </div>
+</form>
+
+<section class="panel progress-panel hidden" id="analysisProgress">
+  <div class="spinner"></div>
+  <div>
+    <h2>Analyzing resume</h2>
+    <ol class="progress-steps">
+      <li data-step="1">Extracting resume text...</li>
+      <li data-step="2">Reading job description...</li>
+      <li data-step="3">Running AI analysis...</li>
+      <li data-step="4">Generating insights...</li>
+    </ol>
+  </div>
+</section>
+
+<section class="analysis-results hidden" id="analysisResults">
+  <article class="panel score-panel">
+    <div class="score-gauge" id="scoreGauge" style="--value:0"><span>0%</span></div>
+    <h2>Overall Match</h2>
+    <p class="muted" id="analysisFilename"></p>
+    <button class="small-btn" id="downloadAnalysisBtn" type="button"><i data-lucide="download"></i>Download Analysis</button>
   </article>
+  <article class="panel">
+    <h2>Score Breakdown</h2>
+    <div class="metric-line"><span>ATS Score</span><b id="atsScore">0%</b></div>
+    <div class="bar"><b id="atsBar" style="width:0%"></b></div>
+    <div class="metric-line"><span>Keyword Score</span><b id="keywordScore">0%</b></div>
+    <div class="bar"><b id="keywordBar" style="width:0%"></b></div>
+  </article>
+  <article class="panel span-2">
+    <h2>Matched Skills</h2>
+    <div class="chip-row success-chips" id="matchedSkills"></div>
+    <h2>Missing Skills</h2>
+    <div class="chip-row danger-chips" id="missingSkills"></div>
+  </article>
+  <article class="panel">
+    <h2>Strengths</h2>
+    <ul class="insight-list" id="strengthsList"></ul>
+  </article>
+  <article class="panel">
+    <h2>Suggestions</h2>
+    <ul class="insight-list" id="suggestionsList"></ul>
+  </article>
+  <article class="panel span-2">
+    <h2>AI Summary</h2>
+    <p class="summary-text" id="analysisSummary"></p>
+  </article>
+</section>
+
+<section class="panel history-panel">
+  <div class="panel-head">
+    <h2>Analysis History</h2>
+    <span class="muted">{{ history|length }} recent analyses</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table" id="analysisHistoryTable">
+      <thead>
+        <tr><th>Date</th><th>File Name</th><th>Score</th><th>ATS Score</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for item in history %}
+        <tr data-summary="{{ item.summary }}" data-matched="{{ item.matched_skills|join(', ') }}" data-missing="{{ item.missing_skills|join(', ') }}">
+          <td>{{ item.created_at }}</td>
+          <td>{{ item.filename }}</td>
+          <td><strong>{{ item.score }}%</strong></td>
+          <td>{{ item.ats_score }}%</td>
+          <td><button class="small-btn view-history-btn" type="button">View Details</button></td>
+        </tr>
+        {% else %}
+        <tr class="empty-history"><td colspan="5">No resume analyses yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </section>
 {% endblock %}

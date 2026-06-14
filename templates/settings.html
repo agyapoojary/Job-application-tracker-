@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Settings</h1>
+    <p>Manage appearance, notifications, and Gemini API access.</p>
+  </div>
+</section>
+
+<form class="settings-grid" method="post">
+  <article class="panel">
+    <div class="panel-head"><h2>Appearance</h2><i data-lucide="palette"></i></div>
+    <label class="toggle-row">
+      <span><strong>Dark Mode</strong><small>Persist the app in a darker interface.</small></span>
+      <input type="checkbox" name="dark_mode" {% if app_settings.dark_mode %}checked{% endif %}>
+    </label>
+  </article>
+
+  <article class="panel">
+    <div class="panel-head"><h2>Notifications</h2><i data-lucide="bell"></i></div>
+    <label class="toggle-row">
+      <span><strong>Email Notifications</strong><small>UI preference saved for future notification workflows.</small></span>
+      <input type="checkbox" name="email_notifications" {% if app_settings.email_notifications %}checked{% endif %}>
+    </label>
+  </article>
+
+  <article class="panel span-2">
+    <div class="panel-head"><h2>Gemini API</h2><span class="soft-badge">Gemini 2.5 Flash</span></div>
+    <label>Gemini API Key
+      <input type="password" name="gemini_api_key" value="{{ app_settings.gemini_api_key or '' }}" placeholder="Paste GEMINI_API_KEY">
+    </label>
+    <p class="muted">The app also reads GEMINI_API_KEY from your .env file. Saving here lets you update the key without changing code.</p>
+  </article>
+
+  <div class="span-2">
+    <button class="primary-btn" type="submit"><i data-lucide="save"></i>Save Settings</button>
+  </div>
+</form>
+{% endblock %}

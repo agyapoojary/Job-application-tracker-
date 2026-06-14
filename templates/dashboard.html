@@ -7,7 +7,7 @@
 <section class="stat-grid">
   {% for stat in stats %}
   <article class="stat-card tone-{{ stat.tone }}">
-    <i data-lucide="{{ stat.icon }}"></i><strong>{{ stat.value }}</strong><span>{{ stat.label }}</span><small>{{ stat.delta }}</small>
+    <i data-lucide="{{ stat.icon }}"></i><strong class="counter" data-target="{{ stat.value|replace('%','') }}">{{ stat.value }}</strong><span>{{ stat.label }}</span><small>{{ stat.delta }}</small>
   </article>
   {% endfor %}
 </section>
@@ -23,7 +23,7 @@
       {% endfor %}
     </div>
   </article>
-  <article class="panel"><h2>Resume Skill Match</h2><div class="donut" style="--value:68"><span>68%</span></div><p class="muted center">Matched skills across saved roles</p></article>
+  <article class="panel"><h2>Resume Skill Match</h2><div class="donut" style="--value:{{ latest_score }}"><span>{{ latest_score }}%</span></div><p class="muted center">Latest Gemini resume analysis</p></article>
   <article class="panel"><h2>Upcoming Interviews</h2><div class="mini-list">{% for app in upcoming %}<p><strong>{{ app.company }}</strong><span>{{ app.status }} - {{ app.date }}</span></p>{% else %}<p><strong>No interviews yet</strong><span>Move tracker cards into interview stages.</span></p>{% endfor %}</div></article>
   <article class="panel"><h2>AI Suggestions</h2><div class="tips">{% for suggestion in suggestions %}<p>{{ suggestion }}</p>{% endfor %}</div></article>
   <article class="panel"><div class="panel-head"><h2>Job Recommendations</h2><a href="{{ url_for('jobs') }}">See all</a></div><div class="mini-list">{% for job in jobs %}<p><strong>{{ job.company }}</strong><span>{{ job.title }} - {{ job.match }}% match</span></p>{% endfor %}</div></article>

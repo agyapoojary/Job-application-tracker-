@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Login | CareerAI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
   <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
@@ -19,6 +22,7 @@
     <section class="login-card">
       <h2>Welcome back</h2>
       <p>Sign in to continue.</p>
+      {% if error %}<p class="flash error">{{ error }}</p>{% endif %}
       <form method="post">
         <label>Email<input type="email" name="email" placeholder="aryan@iit.ac.in"></label>
         <label>Password<input type="password" name="password" placeholder="Password"></label>

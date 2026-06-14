@@ -1,3 +1,7 @@
 Flask==3.0.3
 python-dotenv==1.0.1
+google-generativeai==0.8.5
+python-docx==1.1.2
+pdfplumber==0.11.7
 pypdf==4.3.1
+flask-login==0.6.3

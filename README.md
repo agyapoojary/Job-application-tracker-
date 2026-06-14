@@ -1,15 +1,17 @@
 # CareerAI - Job Internship Application Tracker
 
-CareerAI is a Flask-based AI + Python project for students managing internship and job applications. It now uses SQLite so application data is saved after refreshes and restarts.
+CareerAI is a Flask + SQLite job application assistant with Gemini-powered resume analysis, AI cover letters, authentication, profile/settings management, and a drag-and-drop application tracker.
 
 ## Features
 
-- Dashboard with live stats from saved applications
-- Resume Analyzer with PDF/TXT upload, keyword-based ATS scoring, and skill-gap feedback
-- Job Matcher with search, filters, and Apply buttons
-- Cover Letter Generator that creates a draft from your inputs
-- Interview Prep question bank by category
-- Application Tracker with saved add/delete/status updates
+- Gemini 2.5 Flash resume analysis with ATS score, keyword score, matched skills, missing skills, strengths, suggestions, and summary
+- PDF, DOCX, and TXT resume extraction with pypdf first and pdfplumber fallback for PDFs
+- AJAX resume analyzer with progress steps and saved analysis history
+- Gemini-powered three-paragraph cover letter generator with copy and regenerate controls
+- Dashboard with saved application stats and animated counters
+- Sortable.js Kanban tracker with persisted status updates
+- Single-user Flask-Login authentication using an `APP_PASSWORD` hash
+- Profile and settings pages persisted in SQLite
 - SQLite database stored at `instance/careerai.db`
 
 ## Project Structure
@@ -17,14 +19,13 @@ CareerAI is a Flask-based AI + Python project for students managing internship a
 ```text
 .
 |-- app.py
+|-- ai.py
+|-- db.py
 |-- requirements.txt
 |-- .env.example
 |-- static/
-|   |-- css/
-|   |   `-- style.css
-|   |-- js/
-|   |   `-- app.js
-|   `-- uploads/
+|   |-- css/style.css
+|   `-- js/app.js
 |-- templates/
 |   |-- base.html
 |   |-- dashboard.html
@@ -33,6 +34,8 @@ CareerAI is a Flask-based AI + Python project for students managing internship a
 |   |-- cover_letter.html
 |   |-- interview.html
 |   |-- tracker.html
+|   |-- profile.html
+|   |-- settings.html
 |   |-- simple_page.html
 |   `-- login.html
 `-- instance/
@@ -45,11 +48,10 @@ CareerAI is a Flask-based AI + Python project for students managing internship a
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+copy .env.example .env
 python app.py
 ```
 
+Set `GEMINI_API_KEY` in `.env` or save it from the Settings page. Set `APP_PASSWORD` to a Werkzeug password hash. For local development only, the fallback password is `careerai`.
+
 Open `http://127.0.0.1:5000` in your browser.
-
-## Notes
-
-The current AI features are local rule-based features, so they work without an API key. The resume analyzer reads selectable-text PDFs with `pypdf`. You can later connect OpenAI or another model API inside `analyze_resume_text()` and `make_cover_letter()` in `app.py`.

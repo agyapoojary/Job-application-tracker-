@@ -4,11 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }} | CareerAI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
+  {% if request.endpoint == 'tracker' %}<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js" defer></script>{% endif %}
   <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
 </head>
-<body>
+<body class="{% if settings.dark_mode %}dark{% endif %}">
   <div class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="{{ url_for('dashboard') }}">
@@ -24,10 +28,22 @@
       </nav>
       <div class="sidebar-footer">
         <button class="icon-row" id="themeToggle" type="button"><i data-lucide="moon"></i><span>Toggle theme</span></button>
-        <a class="user-row" href="{{ url_for('login') }}"><span class="avatar">AK</span><span>Aryan Kumar<small>aryan@iit.ac.in</small></span></a>
+        <a class="user-row" href="{{ url_for('profile') }}"><span class="avatar">{{ (profile.full_name or 'CA')[:2].upper() }}</span><span>{{ profile.full_name or 'CareerAI User' }}<small>{{ profile.email or 'single-user mode' }}</small></span></a>
+        <form class="logout-form" method="post" action="{{ url_for('logout') }}">
+          <button class="icon-row" type="submit"><i data-lucide="log-out"></i><span>Logout</span></button>
+        </form>
       </div>
     </aside>
     <main class="content">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="flash-stack">
+          {% for category, message in messages %}
+          <p class="flash {{ category }}">{{ message }}</p>
+          {% endfor %}
+        </div>
+        {% endif %}
+      {% endwith %}
       {% block content %}{% endblock %}
     </main>
   </div>

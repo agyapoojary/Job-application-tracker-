@@ -23,9 +23,9 @@
   {% for status, apps in columns.items() %}
   <div class="kanban-col" data-status="{{ status }}">
     <header><span></span><strong>{{ status }}</strong><b>{{ apps|length }}</b></header>
-    <div class="kanban-list">
+    <div class="kanban-list sortable-list">
       {% for app in apps %}
-      <article class="kanban-card" draggable="true" data-id="{{ app.id }}">
+      <article class="kanban-card" data-id="{{ app.id }}">
         <div><span class="logo">{{ app.company[:2].upper() }}</span><strong>{{ app.company }}</strong></div>
         <p>{{ app.role }}</p>
         {% if app.notes %}<small>{{ app.notes }}</small>{% endif %}

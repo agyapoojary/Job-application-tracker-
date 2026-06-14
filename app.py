@@ -1,33 +1,35 @@
 from __future__ import annotations
 
 import json
-import re
-import sqlite3
+import os
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
+from typing import Any
 
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from dotenv import load_dotenv
+from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
+from flask_login import LoginManager, UserMixin, current_user, login_required, login_user, logout_user
 from pypdf import PdfReader
+from werkzeug.security import check_password_hash
 from werkzeug.utils import secure_filename
 
+from ai import analyze_resume_with_gemini, generate_cover_letter_with_gemini
+from db import DB_PATH, STATUSES, UPLOAD_DIR, get_db, get_settings, init_db, update_settings
 
-BASE_DIR = Path(__file__).resolve().parent
-INSTANCE_DIR = BASE_DIR / "instance"
-UPLOAD_DIR = BASE_DIR / "static" / "uploads"
-DB_PATH = INSTANCE_DIR / "careerai.db"
 
-STATUSES = ["Applied", "Interview Scheduled", "Technical Round", "HR Round", "Selected", "Rejected"]
-SKILL_KEYWORDS = [
-    "python", "flask", "django", "sql", "postgresql", "mysql", "sqlite", "javascript",
-    "typescript", "react", "node", "aws", "gcp", "azure", "docker", "kubernetes",
-    "redis", "graphql", "ci/cd", "machine learning", "tensorflow", "pandas", "java",
-    "c++", "git", "system design", "microservices", "api", "html", "css",
-]
+load_dotenv()
 
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = UPLOAD_DIR
-app.config["SECRET_KEY"] = "dev-secret-change-this"
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-change-this")
+
+login_manager = LoginManager(app)
+login_manager.login_view = "login"
+login_manager.login_message = "Please sign in to continue."
+
+DEFAULT_PASSWORD_HASH = "scrypt:32768:8:1$v74EpwsSofNeU0an$df6fb47fcc3f94572ab6748da5a1e292a7ccb0f0ba992df02ef24b3410b96dc8b37d1ebcac0b2fe9ce7fcf0c140c5ceb96071adff5a71e9bbebd1aba42769e3a"
+ALLOWED_RESUME_EXTENSIONS = {".pdf", ".docx", ".txt"}
 
 NAV_ITEMS = [
     {"endpoint": "dashboard", "icon": "layout-dashboard", "label": "Dashboard"},
@@ -39,28 +41,6 @@ NAV_ITEMS = [
     {"endpoint": "profile", "icon": "user", "label": "Profile"},
     {"endpoint": "settings", "icon": "settings", "label": "Settings"},
     {"endpoint": "admin", "icon": "shield", "label": "Admin"},
-]
-
-SEED_JOBS = [
-    {"company": "Google", "logo": "G", "title": "Software Engineer Intern", "location": "Bangalore, IN", "salary": "INR 80K-1.2L/mo", "match": 94, "type": "Internship", "mode": "Hybrid", "exp": "0-1 yr", "tags": ["Python", "ML", "GCP"]},
-    {"company": "Microsoft", "logo": "M", "title": "SWE Intern - Azure", "location": "Hyderabad, IN", "salary": "INR 70K-90K/mo", "match": 88, "type": "Internship", "mode": "Hybrid", "exp": "0-1 yr", "tags": ["C#", ".NET", "Azure"]},
-    {"company": "Amazon", "logo": "A", "title": "Software Development Engineer I", "location": "Bangalore, IN", "salary": "INR 20-28 LPA", "match": 81, "type": "Full Time", "mode": "On-site", "exp": "0-2 yr", "tags": ["Java", "AWS", "Microservices"]},
-    {"company": "Stripe", "logo": "S", "title": "Frontend Engineer", "location": "Remote", "salary": "$120-150K/yr", "match": 91, "type": "Full Time", "mode": "Remote", "exp": "0-2 yr", "tags": ["React", "TypeScript", "Node.js"]},
-    {"company": "Razorpay", "logo": "R", "title": "Backend Developer", "location": "Bangalore, IN", "salary": "INR 15-22 LPA", "match": 76, "type": "Full Time", "mode": "Hybrid", "exp": "1-3 yr", "tags": ["Go", "Kafka", "PostgreSQL"]},
-    {"company": "CRED", "logo": "C", "title": "SDE Intern", "location": "Bangalore, IN", "salary": "INR 60K-80K/mo", "match": 85, "type": "Internship", "mode": "On-site", "exp": "0-1 yr", "tags": ["Kotlin", "Android", "Firebase"]},
-    {"company": "Meesho", "logo": "M", "title": "Data Engineer", "location": "Bangalore, IN", "salary": "INR 12-18 LPA", "match": 72, "type": "Full Time", "mode": "Hybrid", "exp": "0-2 yr", "tags": ["Spark", "Python", "Airflow"]},
-    {"company": "Zepto", "logo": "Z", "title": "SDE - Platform", "location": "Mumbai, IN", "salary": "INR 18-24 LPA", "match": 79, "type": "Full Time", "mode": "On-site", "exp": "1-2 yr", "tags": ["Node.js", "Redis", "Docker"]},
-]
-
-SEED_APPLICATIONS = [
-    {"company": "Atlassian", "role": "SWE Intern", "status": "Applied", "applied_on": "2026-06-09", "notes": "Applied through campus portal", "match_score": 84},
-    {"company": "Uber", "role": "Backend Dev", "status": "Applied", "applied_on": "2026-06-07", "notes": "", "match_score": 78},
-    {"company": "Google", "role": "SWE Intern", "status": "Interview Scheduled", "applied_on": "2026-06-08", "notes": "Jun 12 @ 10AM", "match_score": 91},
-    {"company": "Microsoft", "role": "SWE Intern", "status": "Interview Scheduled", "applied_on": "2026-06-05", "notes": "Jun 14 @ 2PM", "match_score": 87},
-    {"company": "Amazon", "role": "SDE I", "status": "Technical Round", "applied_on": "2026-06-03", "notes": "2nd technical round pending", "match_score": 78},
-    {"company": "Flipkart", "role": "Product Intern", "status": "HR Round", "applied_on": "2026-05-30", "notes": "", "match_score": 82},
-    {"company": "Razorpay", "role": "Backend Intern", "status": "Selected", "applied_on": "2026-05-20", "notes": "Offer letter received", "match_score": 89},
-    {"company": "Zomato", "role": "SWE", "status": "Rejected", "applied_on": "2026-05-25", "notes": "", "match_score": 65},
 ]
 
 INTERVIEW_QUESTIONS = {
@@ -84,63 +64,16 @@ INTERVIEW_QUESTIONS = {
 }
 
 
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+class SingleUser(UserMixin):
+    id = "careerai-user"
 
 
-def init_db() -> None:
-    INSTANCE_DIR.mkdir(exist_ok=True)
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    with get_db() as conn:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS jobs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                company TEXT NOT NULL,
-                logo TEXT NOT NULL,
-                title TEXT NOT NULL,
-                location TEXT NOT NULL,
-                salary TEXT NOT NULL,
-                match_score INTEGER NOT NULL,
-                job_type TEXT NOT NULL,
-                mode TEXT NOT NULL,
-                experience TEXT NOT NULL,
-                tags TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS applications (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                company TEXT NOT NULL,
-                role TEXT NOT NULL,
-                status TEXT NOT NULL,
-                applied_on TEXT NOT NULL,
-                notes TEXT DEFAULT '',
-                match_score INTEGER DEFAULT 70,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            );
-            """
-        )
-        if conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0:
-            conn.executemany(
-                """
-                INSERT INTO jobs (company, logo, title, location, salary, match_score, job_type, mode, experience, tags)
-                VALUES (:company, :logo, :title, :location, :salary, :match, :type, :mode, :exp, :tags)
-                """,
-                [{**job, "tags": json.dumps(job["tags"])} for job in SEED_JOBS],
-            )
-        if conn.execute("SELECT COUNT(*) FROM applications").fetchone()[0] == 0:
-            conn.executemany(
-                """
-                INSERT INTO applications (company, role, status, applied_on, notes, match_score)
-                VALUES (:company, :role, :status, :applied_on, :notes, :match_score)
-                """,
-                SEED_APPLICATIONS,
-            )
+@login_manager.user_loader
+def load_user(user_id: str) -> SingleUser | None:
+    return SingleUser() if user_id == "careerai-user" else None
 
 
-def rows_to_jobs(rows: list[sqlite3.Row]) -> list[dict]:
+def rows_to_jobs(rows) -> list[dict[str, Any]]:
     return [
         {
             "id": row["id"],
@@ -159,7 +92,7 @@ def rows_to_jobs(rows: list[sqlite3.Row]) -> list[dict]:
     ]
 
 
-def row_to_application(row: sqlite3.Row) -> dict:
+def row_to_application(row) -> dict[str, Any]:
     return {
         "id": row["id"],
         "company": row["company"],
@@ -172,163 +105,211 @@ def row_to_application(row: sqlite3.Row) -> dict:
     }
 
 
-def get_applications() -> list[dict]:
+def get_applications() -> list[dict[str, Any]]:
     with get_db() as conn:
         rows = conn.execute("SELECT * FROM applications ORDER BY applied_on DESC, id DESC").fetchall()
     return [row_to_application(row) for row in rows]
 
 
-def get_jobs() -> list[dict]:
+def get_jobs() -> list[dict[str, Any]]:
     with get_db() as conn:
         rows = conn.execute("SELECT * FROM jobs ORDER BY match_score DESC").fetchall()
     return rows_to_jobs(rows)
 
 
-def build_dashboard_stats(applications: list[dict], resume_score: int = 82) -> list[dict]:
+def get_profile() -> dict[str, Any]:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id = 1").fetchone()
+    return dict(row) if row else {}
+
+
+def get_resume_history(limit: int = 12) -> list[dict[str, Any]]:
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM resume_analyses ORDER BY created_at DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    history = []
+    for row in rows:
+        item = dict(row)
+        item["matched_skills"] = json.loads(item.get("matched_skills") or "[]")
+        item["missing_skills"] = json.loads(item.get("missing_skills") or "[]")
+        history.append(item)
+    return history
+
+
+def latest_resume_score() -> int:
+    with get_db() as conn:
+        row = conn.execute("SELECT score FROM resume_analyses ORDER BY created_at DESC, id DESC LIMIT 1").fetchone()
+    return int(row["score"]) if row else 82
+
+
+def build_dashboard_stats(applications: list[dict[str, Any]], resume_score: int) -> list[dict[str, str]]:
     total = len(applications)
-    interviews = len([app for app in applications if app["status"] in {"Interview Scheduled", "Technical Round", "HR Round"}])
-    selected = len([app for app in applications if app["status"] == "Selected"])
+    interviews = len([app_item for app_item in applications if app_item["status"] in {"Interview Scheduled", "Technical Round", "HR Round"}])
+    selected = len([app_item for app_item in applications if app_item["status"] == "Selected"])
     cover_letters = max(1, total // 2)
     missing_skills = max(0, 12 - selected)
     return [
-        {"label": "Resume Match Score", "value": f"{resume_score}%", "delta": "Based on latest analysis", "icon": "target", "tone": "indigo"},
+        {"label": "Resume Match Score", "value": f"{resume_score}%", "delta": "Latest AI analysis", "icon": "target", "tone": "indigo"},
         {"label": "Applications Submitted", "value": str(total), "delta": "Saved in SQLite", "icon": "briefcase", "tone": "emerald"},
         {"label": "Interviews Scheduled", "value": str(interviews), "delta": "Active pipeline", "icon": "calendar", "tone": "amber"},
-        {"label": "Skills Missing", "value": str(missing_skills), "delta": "From target job keywords", "icon": "circle-alert", "tone": "rose"},
-        {"label": "Cover Letters", "value": str(cover_letters), "delta": "Generated drafts", "icon": "pen-line", "tone": "sky"},
+        {"label": "Skills Missing", "value": str(missing_skills), "delta": "From target roles", "icon": "circle-alert", "tone": "rose"},
+        {"label": "Cover Letters", "value": str(cover_letters), "delta": "AI-ready drafts", "icon": "pen-line", "tone": "sky"},
     ]
 
 
-def analyze_resume_text(resume_text: str, job_description: str, filename: str = "", extraction_note: str = "") -> dict:
-    combined_resume = f"{resume_text} {filename}".lower()
-    job_text = job_description.lower()
-    required = [skill for skill in SKILL_KEYWORDS if skill in job_text]
-    if not required:
-        required = ["python", "sql", "git", "api", "system design", "communication"]
-    matched = [skill for skill in required if skill in combined_resume]
-    missing = [skill for skill in required if skill not in matched]
-    keyword_score = round((len(matched) / len(required)) * 100) if required else 70
-    word_count = len(resume_text.split())
-    quality_bonus = min(18, word_count // 35)
-    score = min(98, max(45, keyword_score + quality_bonus))
-    ats_score = min(96, max(50, score + 7 if filename.lower().endswith((".pdf", ".docx", ".txt")) else score - 3))
-    detected_sections = [
-        section for section in ["education", "experience", "projects", "skills", "certifications", "achievements"]
-        if section in combined_resume
-    ]
-    section_suggestion = (
-        f"Detected sections: {', '.join(section.title() for section in detected_sections)}."
-        if detected_sections
-        else "Add clear section headings such as Skills, Projects, Experience, and Education."
-    )
-    return {
-        "score": score,
-        "ats_score": ats_score,
-        "keyword_score": keyword_score,
-        "word_count": word_count,
-        "matched": [skill.title() for skill in matched],
-        "missing": [skill.title() for skill in missing] or ["Add more job-specific keywords"],
-        "strengths": [
-            "Includes relevant job keywords" if matched else "Clear upload and job description received",
-            "ATS-friendly file type" if filename.lower().endswith((".pdf", ".docx", ".txt")) else "Use PDF, DOCX, or TXT for best ATS results",
-            "Good length for automated screening" if word_count > 120 else "Concise resume content",
-            section_suggestion,
-        ],
-        "suggestions": [
-            f"Add these missing skills where truthful: {', '.join(skill.title() for skill in missing[:5])}" if missing else "Your resume covers the main requested skills.",
-            "Quantify project impact with numbers such as users, latency, revenue, or accuracy.",
-            "Mirror the exact role title and top keywords from the job description.",
-        ],
-        "filename": filename or "Typed resume text",
-        "extraction_note": extraction_note,
-    }
+def extraction_quality_is_poor(text: str) -> bool:
+    words = text.split()
+    return len(words) < 40 or len(text.strip()) < 250
 
 
-def extract_text_from_upload(upload) -> tuple[str, str, str]:
+def extract_text_from_upload(upload) -> tuple[str, str, str | None]:
     if not upload or not upload.filename:
-        return "", "", "No file uploaded. Paste resume text or choose a PDF/TXT file."
+        return "", "", None
     filename = secure_filename(upload.filename)
     if not filename:
         return "", "", "No valid file name was found."
+    suffix = Path(filename).suffix.lower()
+    if suffix not in ALLOWED_RESUME_EXTENSIONS:
+        return "", filename, "Please upload a PDF, DOCX, or TXT resume file."
+
     path = UPLOAD_DIR / filename
     upload.save(path)
-    if path.suffix.lower() == ".txt":
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        return text, filename, f"Read {len(text.split())} words from TXT."
-    if path.suffix.lower() == ".pdf":
-        try:
+
+    try:
+        if suffix == ".txt":
+            text = path.read_text(encoding="utf-8", errors="ignore").strip()
+            return text, filename, None if text else "Could not extract text from this file. It may be a scanned or image-based PDF."
+        if suffix == ".docx":
+            from docx import Document
+
+            doc = Document(path)
+            text = "\n".join(paragraph.text for paragraph in doc.paragraphs).strip()
+            return text, filename, None if text else "Could not extract text from this file. It may be a scanned or image-based PDF."
+        if suffix == ".pdf":
             reader = PdfReader(str(path))
-            pages = [page.extract_text() or "" for page in reader.pages]
-            text = "\n".join(pages).strip()
-            if text:
-                return text, filename, f"Read {len(text.split())} words from {len(reader.pages)} PDF page(s)."
-            return "", filename, "PDF uploaded, but no selectable text was found. Try a text-based PDF or paste resume text below."
-        except Exception as exc:
-            return "", filename, f"PDF uploaded, but reading failed: {exc}"
-    return "", filename, "File uploaded. For automatic reading, use PDF or TXT."
+            text = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+            if extraction_quality_is_poor(text):
+                import pdfplumber
+
+                with pdfplumber.open(path) as pdf:
+                    fallback_text = "\n".join(page.extract_text() or "" for page in pdf.pages).strip()
+                if len(fallback_text) > len(text):
+                    text = fallback_text
+            return text, filename, None if text else "Could not extract text from this file. It may be a scanned or image-based PDF."
+    except Exception:
+        return "", filename, "Could not extract text from this file. It may be a scanned or image-based PDF."
+    return "", filename, "Please upload a PDF, DOCX, or TXT resume file."
 
 
-def make_cover_letter(form) -> str:
-    name = form.get("name", "Aryan Kumar").strip() or "Aryan Kumar"
-    company = form.get("company", "the company").strip() or "the company"
-    role = form.get("role", "Software Engineer Intern").strip() or "Software Engineer Intern"
-    skills = form.get("skills", "Python, SQL, full-stack development").strip() or "Python, SQL, full-stack development"
-    achievement = form.get("achievement", "built projects that improved user experience and solved real problems").strip()
-    tone = form.get("tone", "Professional")
-    opener = {
-        "Formal": "I am writing to apply for",
-        "Friendly": "I am excited to apply for",
-        "Enthusiastic": "I am thrilled to apply for",
-    }.get(tone, "I am writing to express my interest in")
-    return (
-        f"Dear Hiring Manager,\n\n"
-        f"{opener} the {role} position at {company}. My background in {skills} aligns well with the responsibilities of this role, and I am eager to contribute to meaningful engineering work.\n\n"
-        f"In my recent work, I {achievement}. This experience strengthened my ability to understand requirements, build reliable solutions, and communicate progress clearly with a team.\n\n"
-        f"What interests me most about {company} is the opportunity to solve practical problems at a high standard. I would welcome the chance to discuss how my skills and project experience can support your team.\n\n"
-        f"Warm regards,\n{name}"
-    )
+def save_resume_analysis(analysis: dict[str, Any], filename: str, job_description: str) -> int:
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO resume_analyses
+            (filename, score, ats_score, keyword_score, matched_skills, missing_skills, strengths, suggestions, summary, job_description_preview)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                filename or "Typed resume text",
+                int(analysis["score"]),
+                int(analysis["ats_score"]),
+                int(analysis["keyword_score"]),
+                json.dumps(analysis.get("matched_skills", [])),
+                json.dumps(analysis.get("missing_skills", [])),
+                json.dumps(analysis.get("strengths", [])),
+                json.dumps(analysis.get("suggestions", [])),
+                analysis.get("summary", ""),
+                job_description.strip()[:220],
+            ),
+        )
+        return int(cursor.lastrowid)
+
+
+def analyze_resume_text(resume_text: str, job_description: str, filename: str = "") -> dict[str, Any]:
+    analysis = analyze_resume_with_gemini(resume_text, job_description)
+    analysis["filename"] = filename or "Typed resume text"
+    analysis["word_count"] = len(resume_text.split())
+    return analysis
 
 
 @app.context_processor
 def inject_layout_data():
-    return {"nav_items": NAV_ITEMS, "current_year": date.today().year}
+    profile = get_profile() if DB_PATH.exists() else {}
+    settings = get_settings() if DB_PATH.exists() else {}
+    return {
+        "nav_items": NAV_ITEMS,
+        "current_year": date.today().year,
+        "profile": profile,
+        "settings": settings,
+    }
 
 
 @app.route("/")
+@login_required
 def dashboard():
     applications = get_applications()
     jobs = get_jobs()
-    upcoming = [app for app in applications if app["status"] in {"Interview Scheduled", "Technical Round", "HR Round"}][:3]
+    score = latest_resume_score()
+    upcoming = [app_item for app_item in applications if app_item["status"] in {"Interview Scheduled", "Technical Round", "HR Round"}][:3]
     suggestions = [
-        "Add missing skills from your highest-match jobs to your resume.",
+        "Run a fresh Gemini resume analysis before applying to a new role.",
         "Move active interview applications to the right tracker stage.",
         "Generate a tailored cover letter before applying to recommended roles.",
     ]
     return render_template(
         "dashboard.html",
         title="Dashboard",
-        stats=build_dashboard_stats(applications),
+        stats=build_dashboard_stats(applications, score),
         applications=applications[:5],
         jobs=jobs[:3],
         upcoming=upcoming,
         suggestions=suggestions,
+        latest_score=score,
     )
 
 
 @app.route("/resume", methods=["GET", "POST"])
+@login_required
 def resume():
-    analysis = None
-    resume_text = ""
-    job_description = ""
     if request.method == "POST":
-        uploaded_text, filename, extraction_note = extract_text_from_upload(request.files.get("resume"))
-        resume_text = request.form.get("resume_text", "")
-        job_description = request.form.get("job_description", "")
-        analysis = analyze_resume_text(f"{uploaded_text}\n{resume_text}", job_description, filename, extraction_note)
-    return render_template("resume.html", title="Resume Analyzer", analysis=analysis, resume_text=resume_text, job_description=job_description)
+        result, status = handle_resume_analysis()
+        if status != 200:
+            flash(result["error"], "error")
+        else:
+            flash("Resume analysis completed.", "success")
+        return redirect(url_for("resume"))
+    return render_template("resume.html", title="Resume Analyzer", history=get_resume_history())
+
+
+@app.post("/api/resume/analyze")
+@login_required
+def api_resume_analyze():
+    result, status = handle_resume_analysis()
+    return jsonify(result), status
+
+
+def handle_resume_analysis() -> tuple[dict[str, Any], int]:
+    uploaded_text, filename, extraction_error = extract_text_from_upload(request.files.get("resume"))
+    pasted_text = request.form.get("resume_text", "").strip()
+    job_description = request.form.get("job_description", "").strip()
+    resume_text = f"{uploaded_text}\n{pasted_text}".strip()
+    if extraction_error and not pasted_text:
+        return {"ok": False, "error": extraction_error}, 400
+    if not resume_text:
+        return {"ok": False, "error": "Upload a resume file or paste resume text before analyzing."}, 400
+    if not job_description:
+        return {"ok": False, "error": "Paste Job Description before running analysis."}, 400
+
+    analysis = analyze_resume_text(resume_text, job_description, filename)
+    analysis_id = save_resume_analysis(analysis, filename, job_description)
+    analysis["id"] = analysis_id
+    return {"ok": True, "analysis": analysis, "history": get_resume_history()}, 200
 
 
 @app.route("/jobs")
+@login_required
 def jobs():
     query = request.args.get("q", "").lower()
     job_type = request.args.get("type", "All")
@@ -343,6 +324,7 @@ def jobs():
 
 
 @app.post("/jobs/<int:job_id>/apply")
+@login_required
 def apply_to_job(job_id: int):
     with get_db() as conn:
         job = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
@@ -358,14 +340,24 @@ def apply_to_job(job_id: int):
 
 
 @app.route("/cover-letter", methods=["GET", "POST"])
+@login_required
 def cover_letter():
     letter = None
+    error = None
     if request.method == "POST":
-        letter = make_cover_letter(request.form)
-    return render_template("cover_letter.html", title="Cover Letter", generated=letter is not None, letter=letter, form=request.form)
+        letter, error = generate_cover_letter_with_gemini(request.form)
+    return render_template("cover_letter.html", title="Cover Letter", generated=letter is not None, letter=letter, error=error, form=request.form)
+
+
+@app.post("/api/cover-letter")
+@login_required
+def api_cover_letter():
+    letter, error = generate_cover_letter_with_gemini(request.form)
+    return jsonify({"ok": True, "letter": letter, "warning": error})
 
 
 @app.route("/interview")
+@login_required
 def interview():
     category = request.args.get("category", "Technical")
     if category not in INTERVIEW_QUESTIONS:
@@ -374,6 +366,7 @@ def interview():
 
 
 @app.route("/tracker")
+@login_required
 def tracker():
     applications = get_applications()
     columns = {status: [] for status in STATUSES}
@@ -392,6 +385,7 @@ def tracker():
 
 
 @app.post("/applications")
+@login_required
 def add_application():
     company = request.form.get("company", "").strip()
     role = request.form.get("role", "").strip()
@@ -415,6 +409,7 @@ def add_application():
 
 
 @app.post("/applications/<int:application_id>/status")
+@login_required
 def update_application_status(application_id: int):
     payload = request.get_json(silent=True) or request.form
     status = payload.get("status", "Applied")
@@ -426,23 +421,57 @@ def update_application_status(application_id: int):
 
 
 @app.post("/applications/<int:application_id>/delete")
+@login_required
 def delete_application(application_id: int):
     with get_db() as conn:
         conn.execute("DELETE FROM applications WHERE id = ?", (application_id,))
     return redirect(url_for("tracker"))
 
 
-@app.route("/profile")
+@app.route("/profile", methods=["GET", "POST"])
+@login_required
 def profile():
-    return render_template("simple_page.html", title="Profile", heading="Profile", description="Manage your profile, resume links, portfolio, and preferred roles.")
+    if request.method == "POST":
+        with get_db() as conn:
+            conn.execute(
+                """
+                UPDATE users
+                SET full_name = ?, email = ?, target_role = ?, graduation_year = ?, skills = ?,
+                    linkedin_url = ?, github_url = ?, resume_link = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = 1
+                """,
+                (
+                    request.form.get("full_name", "").strip(),
+                    request.form.get("email", "").strip(),
+                    request.form.get("target_role", "").strip(),
+                    request.form.get("graduation_year", "").strip(),
+                    request.form.get("skills", "").strip(),
+                    request.form.get("linkedin_url", "").strip(),
+                    request.form.get("github_url", "").strip(),
+                    request.form.get("resume_link", "").strip(),
+                ),
+            )
+        flash("Profile saved.", "success")
+        return redirect(url_for("profile"))
+    return render_template("profile.html", title="Profile", user_profile=get_profile())
 
 
-@app.route("/settings")
+@app.route("/settings", methods=["GET", "POST"])
+@login_required
 def settings():
-    return render_template("simple_page.html", title="Settings", heading="Settings", description="Configure notifications, privacy preferences, appearance, and AI defaults.")
+    if request.method == "POST":
+        update_settings(
+            request.form.get("dark_mode") == "on",
+            request.form.get("email_notifications") == "on",
+            request.form.get("gemini_api_key", ""),
+        )
+        flash("Settings saved.", "success")
+        return redirect(url_for("settings"))
+    return render_template("settings.html", title="Settings", app_settings=get_settings())
 
 
 @app.route("/admin")
+@login_required
 def admin():
     applications = get_applications()
     by_status = defaultdict(int)
@@ -454,9 +483,24 @@ def admin():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    if request.method == "POST":
+    if current_user.is_authenticated:
         return redirect(url_for("dashboard"))
-    return render_template("login.html", title="Login")
+    error = None
+    if request.method == "POST":
+        password_hash = os.getenv("APP_PASSWORD", DEFAULT_PASSWORD_HASH)
+        password = request.form.get("password", "")
+        if check_password_hash(password_hash, password):
+            login_user(SingleUser())
+            return redirect(request.args.get("next") or url_for("dashboard"))
+        error = "Invalid password. Check APP_PASSWORD in your .env file."
+    return render_template("login.html", title="Login", error=error)
+
+
+@app.post("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for("login"))
 
 
 init_db()

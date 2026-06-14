@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <h1>Profile</h1>
+    <p>Keep your job-search identity, links, and target role in one place.</p>
+  </div>
+</section>
+
+<section class="two-col wide-right">
+  <article class="panel profile-card">
+    <span class="avatar large">{{ (user_profile.full_name or 'CA')[:2].upper() }}</span>
+    <h2>{{ user_profile.full_name or 'CareerAI User' }}</h2>
+    <p class="muted">{{ user_profile.target_role or 'Target role not set' }}</p>
+    <div class="profile-links">
+      {% if user_profile.linkedin_url %}<a href="{{ user_profile.linkedin_url }}" target="_blank">LinkedIn</a>{% endif %}
+      {% if user_profile.github_url %}<a href="{{ user_profile.github_url }}" target="_blank">GitHub</a>{% endif %}
+      {% if user_profile.resume_link %}<a href="{{ user_profile.resume_link }}" target="_blank">Resume</a>{% endif %}
+    </div>
+  </article>
+
+  <form class="panel" method="post">
+    <div class="panel-head"><h2>Edit Profile</h2><span class="soft-badge">Single-user mode</span></div>
+    <div class="form-grid">
+      <label>Full Name<input name="full_name" value="{{ user_profile.full_name or '' }}"></label>
+      <label>Email<input type="email" name="email" value="{{ user_profile.email or '' }}"></label>
+      <label>Target Role<input name="target_role" value="{{ user_profile.target_role or '' }}"></label>
+      <label>Graduation Year<input name="graduation_year" value="{{ user_profile.graduation_year or '' }}"></label>
+      <label class="span-2">Skills<textarea name="skills">{{ user_profile.skills or '' }}</textarea></label>
+      <label>LinkedIn URL<input name="linkedin_url" value="{{ user_profile.linkedin_url or '' }}"></label>
+      <label>GitHub URL<input name="github_url" value="{{ user_profile.github_url or '' }}"></label>
+      <label class="span-2">Resume Link<input name="resume_link" value="{{ user_profile.resume_link or '' }}"></label>
+    </div>
+    <button class="primary-btn" type="submit"><i data-lucide="save"></i>Save Profile</button>
+  </form>
+</section>
+{% endblock %}
