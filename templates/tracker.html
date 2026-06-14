@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head"><div><h1>Application Tracker</h1><p>Drag cards between columns to update status.</p></div></section>
+<section class="tracker-stats">
+  <div><strong>{{ stats.total }}</strong><span>Total Applications</span></div>
+  <div><strong>{{ stats.pending }}</strong><span>Pending</span></div>
+  <div><strong>{{ stats.success }}%</strong><span>Success Rate</span></div>
+  <div><strong>{{ stats.selected }}</strong><span>Selected</span></div>
+  <button class="primary-btn" id="addCardBtn" type="button"><i data-lucide="plus"></i>Add Application</button>
+</section>
+<form class="panel add-application-form hidden" id="addApplicationForm" method="post" action="{{ url_for('add_application') }}">
+  <div class="form-grid">
+    <label>Company<input name="company" required placeholder="e.g. Google"></label>
+    <label>Role<input name="role" required placeholder="e.g. SWE Intern"></label>
+    <label>Status<select name="status">{% for status in statuses %}<option>{{ status }}</option>{% endfor %}</select></label>
+    <label>Applied On<input type="date" name="applied_on"></label>
+    <label>Match Score<input type="number" name="match_score" min="0" max="100" value="70"></label>
+    <label>Notes<input name="notes" placeholder="Interview date, portal, referral..."></label>
+  </div>
+  <div class="form-actions"><button class="primary-btn" type="submit">Save Application</button><button class="small-btn" id="cancelAddBtn" type="button">Cancel</button></div>
+</form>
+<section class="kanban" id="kanbanBoard">
+  {% for status, apps in columns.items() %}
+  <div class="kanban-col" data-status="{{ status }}">
+    <header><span></span><strong>{{ status }}</strong><b>{{ apps|length }}</b></header>
+    <div class="kanban-list">
+      {% for app in apps %}
+      <article class="kanban-card" draggable="true" data-id="{{ app.id }}">
+        <div><span class="logo">{{ app.company[:2].upper() }}</span><strong>{{ app.company }}</strong></div>
+        <p>{{ app.role }}</p>
+        {% if app.notes %}<small>{{ app.notes }}</small>{% endif %}
+        <time>{{ app.date }}</time>
+        <form method="post" action="{{ url_for('delete_application', application_id=app.id) }}"><button class="delete-btn" type="submit">Delete</button></form>
+      </article>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</section>
+{% endblock %}

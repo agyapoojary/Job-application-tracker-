@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head"><div><h1>AI Cover Letter Generator</h1><p>Generate a personalized cover letter from your resume and job description.</p></div></section>
+<section class="two-col wide-right">
+  <form class="panel" method="post">
+    <h2>Configure Letter</h2>
+    <label>Your Name<input name="name" value="{{ form.get('name', 'Aryan Kumar') }}"></label>
+    <label>Company<input name="company" value="{{ form.get('company', 'Google') }}"></label>
+    <label>Role<input name="role" value="{{ form.get('role', 'Software Engineer Intern') }}"></label>
+    <label>Your Key Skills<input name="skills" value="{{ form.get('skills', 'Python, SQL, Flask, full-stack development') }}"></label>
+    <label>Best Achievement<textarea name="achievement">{{ form.get('achievement', 'built a recommendation engine that improved user engagement by 34%') }}</textarea></label>
+    <label>Tone<select name="tone">{% for option in ['Professional', 'Formal', 'Friendly', 'Enthusiastic'] %}<option {% if form.get('tone', 'Professional') == option %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
+    <button class="primary-btn" type="submit"><i data-lucide="sparkles"></i>{% if generated %}Regenerate{% else %}Generate{% endif %} Cover Letter</button>
+    <div class="tips"><p>Use one quantified achievement.</p><p>Mirror keywords from the job description.</p><p>Keep the letter under 300 words.</p></div>
+  </form>
+  <article class="panel letter-panel">
+    <div class="panel-head"><h2>Generated Letter</h2>{% if generated %}<button class="icon-btn copy-letter" type="button"><i data-lucide="copy"></i></button>{% endif %}</div>
+    {% if generated %}
+    <div class="letter" id="letterText">{{ letter }}</div>
+    {% else %}
+    <div class="empty-state"><i data-lucide="sparkles"></i><strong>Your cover letter will appear here</strong><span>Fill the form and generate a polished draft.</span></div>
+    {% endif %}
+  </article>
+</section>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head"><div><h1>AI Resume Analyzer</h1><p>Upload your resume and paste a job description for AI-powered feedback.</p></div></section>
+<section class="two-col">
+  <form class="panel" method="post" enctype="multipart/form-data">
+    <h2>Upload Resume</h2>
+    <label class="upload-box"><i data-lucide="upload-cloud"></i><strong>Upload your resume PDF</strong><span id="resumeFileName">PDF and TXT files are read automatically.</span><input id="resumeFileInput" type="file" name="resume" accept=".pdf,.txt"></label>
+    <label>Resume Text<textarea name="resume_text" placeholder="Optional: paste resume text here if your PDF is scanned or image-based...">{{ resume_text }}</textarea></label>
+    <label>Job Description<textarea name="job_description" placeholder="Paste the job description here...">{{ job_description }}</textarea></label>
+    <button class="primary-btn" type="submit"><i data-lucide="sparkles"></i>Analyze with AI</button>
+  </form>
+  <article class="panel">
+    {% if analysis %}
+    <h2>Resume Score</h2>
+    <p class="muted">Analyzed: {{ analysis.filename }}</p>
+    <p class="analysis-note">{{ analysis.extraction_note }}</p>
+    <div class="score-line"><span>Words Read</span><b>{{ analysis.word_count }}</b></div>
+    <div class="score-line"><span>ATS Compatibility</span><b>{{ analysis.ats_score }}%</b></div><div class="bar"><b style="width:{{ analysis.ats_score }}%"></b></div>
+    <div class="score-line"><span>Resume Quality</span><b>{{ analysis.score }}%</b></div><div class="bar"><b style="width:{{ analysis.score }}%"></b></div>
+    <div class="score-line"><span>Keyword Match</span><b>{{ analysis.keyword_score }}%</b></div><div class="bar"><b style="width:{{ analysis.keyword_score }}%"></b></div>
+    <h3>Strengths</h3><ul>{% for item in analysis.strengths %}<li>{{ item }}</li>{% endfor %}</ul>
+    <h3>Matched Skills</h3><div class="chip-row">{% for skill in analysis.matched %}<span>{{ skill }}</span>{% else %}<span>No exact matches found yet</span>{% endfor %}</div>
+    <h3>Missing Skills</h3><div class="chip-row">{% for skill in analysis.missing %}<span>{{ skill }}</span>{% endfor %}</div>
+    <h3>Suggestions</h3><ul>{% for item in analysis.suggestions %}<li>{{ item }}</li>{% endfor %}</ul>
+    {% else %}
+    <div class="empty-state"><i data-lucide="file-text"></i><strong>Upload your resume to see AI analysis</strong><span>Get scores, missing skills, and personalized suggestions.</span></div>
+    {% endif %}
+  </article>
+</section>
+{% endblock %}

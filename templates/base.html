@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} | CareerAI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="{{ url_for('dashboard') }}">
+        <span class="brand-mark"><i data-lucide="sparkles"></i></span>
+        <span><strong>CareerAI</strong><small>Job Helper</small></span>
+      </a>
+      <nav class="nav-list">
+        {% for item in nav_items %}
+        <a class="nav-link {% if request.endpoint == item.endpoint %}active{% endif %}" href="{{ url_for(item.endpoint) }}">
+          <i data-lucide="{{ item.icon }}"></i><span>{{ item.label }}</span>
+        </a>
+        {% endfor %}
+      </nav>
+      <div class="sidebar-footer">
+        <button class="icon-row" id="themeToggle" type="button"><i data-lucide="moon"></i><span>Toggle theme</span></button>
+        <a class="user-row" href="{{ url_for('login') }}"><span class="avatar">AK</span><span>Aryan Kumar<small>aryan@iit.ac.in</small></span></a>
+      </div>
+    </aside>
+    <main class="content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

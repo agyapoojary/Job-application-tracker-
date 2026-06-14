@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head"><div><h1>Interview Preparation</h1><p>Practice with AI-curated questions based on target companies.</p></div></section>
+<section class="two-col narrow-left">
+  <aside class="panel">
+    <h2>Readiness Score</h2>
+    <div class="donut" style="--value:72"><span>72</span></div>
+    <div class="category-list">
+      {% for name in questions %}
+      <a class="{% if category == name %}active{% endif %}" href="{{ url_for('interview', category=name) }}">{{ name }}<span>{{ questions[name]|length }}</span></a>
+      {% endfor %}
+    </div>
+  </aside>
+  <div class="question-list">
+    {% for item in questions[category] %}
+    <details class="question-card">
+      <summary><span>{{ loop.index }}</span><strong>{{ item.q }}</strong><em>{{ item.difficulty }}</em></summary>
+      <p>{{ item.answer }}</p>
+      <button class="small-btn" type="button"><i data-lucide="check-circle"></i>Mark as Practiced</button>
+    </details>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

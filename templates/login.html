@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login | CareerAI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+</head>
+<body>
+  <main class="login-page">
+    <section class="login-hero">
+      <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark"><i data-lucide="sparkles"></i></span><span><strong>CareerAI</strong><small>Job Helper</small></span></a>
+      <h1>Land Your Dream Job Faster with AI</h1>
+      <p>Resume analysis, job matching, cover letters, and interview preparation built for students.</p>
+      <div class="hero-stats"><span><b>12,400+</b>Students Helped</span><span><b>38,000+</b>Resumes Analyzed</span><span><b>5,800+</b>Placements</span></div>
+    </section>
+    <section class="login-card">
+      <h2>Welcome back</h2>
+      <p>Sign in to continue.</p>
+      <form method="post">
+        <label>Email<input type="email" name="email" placeholder="aryan@iit.ac.in"></label>
+        <label>Password<input type="password" name="password" placeholder="Password"></label>
+        <button class="primary-btn" type="submit">Sign In<i data-lucide="arrow-right"></i></button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>
