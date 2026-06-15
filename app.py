@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
+import uuid
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
@@ -15,11 +18,13 @@ from pypdf import PdfReader
 from werkzeug.security import check_password_hash
 from werkzeug.utils import secure_filename
 
-from ai import analyze_resume_with_gemini, generate_cover_letter_with_gemini
+from ai import AIError, analyze_resume, generate_cover_letter_with_gemini, match_job_description
 from db import DB_PATH, STATUSES, UPLOAD_DIR, get_db, get_settings, get_user_by_id, init_db, update_settings, upsert_google_user
 
 
 load_dotenv()
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+LOGGER = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = UPLOAD_DIR
@@ -38,11 +43,8 @@ oauth.register(
     client_kwargs={"scope": "openid email profile"},
 )
 
-login_manager.login_view = "login"
-login_manager.login_message = "Please sign in to continue."
-
 DEFAULT_PASSWORD_HASH = "scrypt:32768:8:1$v74EpwsSofNeU0an$df6fb47fcc3f94572ab6748da5a1e292a7ccb0f0ba992df02ef24b3410b96dc8b37d1ebcac0b2fe9ce7fcf0c140c5ceb96071adff5a71e9bbebd1aba42769e3a"
-ALLOWED_RESUME_EXTENSIONS = {".pdf", ".docx", ".txt"}
+ALLOWED_RESUME_EXTENSIONS = {".pdf", ".docx"}
 
 NAV_ITEMS = [
     {"endpoint": "dashboard", "icon": "layout-dashboard", "label": "Dashboard"},
@@ -58,22 +60,24 @@ NAV_ITEMS = [
 
 INTERVIEW_QUESTIONS = {
     "Technical": [
-        {"difficulty": "Easy", "q": "Explain the difference between a stack and a queue.", "answer": "A stack is LIFO and works well for undo operations, recursion, and DFS. A queue is FIFO and fits scheduling, BFS, and ordered task processing."},
-        {"difficulty": "Medium", "q": "What is the time complexity of QuickSort?", "answer": "Average complexity is O(n log n). Worst case is O(n^2), usually when pivots split the array poorly. Randomized pivots reduce that risk."},
-        {"difficulty": "Hard", "q": "Design a URL shortener for 1 million requests per second.", "answer": "Use stateless app servers behind a load balancer, Redis for hot reads, durable storage for mappings, sharding, and a distributed ID generator."},
+        {"difficulty": "Easy", "q": "Explain the difference between a stack and a queue.", "answer": "A stack is LIFO and a queue is FIFO."},
+        {"difficulty": "Medium", "q": "How would you optimize a slow database-backed endpoint?", "answer": "Measure the query plan, add targeted indexes, reduce transferred data, cache where suitable, and keep correctness tests around the change."},
     ],
     "HR": [
-        {"difficulty": "Easy", "q": "Tell me about yourself.", "answer": "Start with your current role, mention one strong project, connect your skills to the target role, and close with why this company."},
-        {"difficulty": "Medium", "q": "Why do you want this company?", "answer": "Use a specific product, engineering problem, or mission point. Then connect it to your own work and interests."},
+        {"difficulty": "Easy", "q": "Tell me about yourself.", "answer": "Connect your current work, one relevant achievement, and why the role fits your direction."},
+        {"difficulty": "Medium", "q": "Why are you interested in this role?", "answer": "Use specific responsibilities from the role and connect them to your skills and goals."},
     ],
     "Behavioral": [
-        {"difficulty": "Easy", "q": "Tell me about a tight deadline.", "answer": "Use STAR: situation, task, action, result. Show scope control, teamwork, and what shipped."},
-        {"difficulty": "Medium", "q": "Describe a teammate conflict.", "answer": "Focus on listening, evidence-based decisions, and the shared goal rather than blaming the other person."},
+        {"difficulty": "Easy", "q": "Tell me about a tight deadline.", "answer": "Use situation, task, action, and result, with one clear lesson learned."},
+        {"difficulty": "Medium", "q": "Describe a conflict with a teammate.", "answer": "Focus on listening, evidence, and the shared outcome."},
     ],
-    "Aptitude": [
-        {"difficulty": "Easy", "q": "A train travels 360 km in 4 hours. How long for 540 km?", "answer": "Speed is 90 km/h, so 540 km takes 6 hours."},
-        {"difficulty": "Medium", "q": "How many ways can ENGINEER be arranged?", "answer": "There are 8 letters with E repeated 3 times and N repeated 2 times, so 8! / (3! * 2!) = 3360."},
-    ],
+}
+
+SKILL_TERMS = {
+    "python", "java", "javascript", "typescript", "c++", "c#", "sql", "sqlite", "postgresql", "mysql",
+    "flask", "django", "fastapi", "react", "node.js", "express", "html", "css", "tailwind",
+    "aws", "azure", "gcp", "docker", "kubernetes", "git", "github", "linux", "rest api",
+    "machine learning", "data analysis", "pandas", "numpy", "tensorflow", "pytorch", "excel",
 }
 
 
@@ -108,219 +112,234 @@ def google_oauth_enabled() -> bool:
     return bool(os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET"))
 
 
-def rows_to_jobs(rows) -> list[dict[str, Any]]:
-    return [
-        {
-            "id": row["id"],
-            "company": row["company"],
-            "logo": row["logo"],
-            "title": row["title"],
-            "location": row["location"],
-            "salary": row["salary"],
-            "match": row["match_score"],
-            "type": row["job_type"],
-            "mode": row["mode"],
-            "exp": row["experience"],
-            "tags": json.loads(row["tags"]),
-        }
-        for row in rows
-    ]
+def parse_json_list(value: str | None) -> list[str]:
+    try:
+        parsed = json.loads(value or "[]")
+    except json.JSONDecodeError:
+        return []
+    return [str(item) for item in parsed if str(item).strip()] if isinstance(parsed, list) else []
 
 
-def row_to_application(row) -> dict[str, Any]:
-    return {
-        "id": row["id"],
-        "company": row["company"],
-        "role": row["role"],
-        "status": row["status"],
-        "date": date.fromisoformat(row["applied_on"]).strftime("%b %d, %Y"),
-        "applied_on": row["applied_on"],
-        "notes": row["notes"] or "",
-        "match": row["match_score"],
-    }
+def get_profile(user_id: int | None = None) -> dict[str, Any]:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (get_active_user_id(user_id),)).fetchone()
+    return dict(row) if row else {}
 
 
 def get_applications(user_id: int | None = None) -> list[dict[str, Any]]:
-    target_user_id = get_active_user_id(user_id)
     with get_db() as conn:
         rows = conn.execute(
             "SELECT * FROM applications WHERE user_id = ? ORDER BY applied_on DESC, id DESC",
-            (target_user_id,),
+            (get_active_user_id(user_id),),
         ).fetchall()
-    return [row_to_application(row) for row in rows]
+    applications = []
+    for row in rows:
+        item = dict(row)
+        item["date"] = date.fromisoformat(item["applied_on"]).strftime("%b %d, %Y")
+        applications.append(item)
+    return applications
 
 
 def get_jobs() -> list[dict[str, Any]]:
     with get_db() as conn:
-        rows = conn.execute("SELECT * FROM jobs ORDER BY match_score DESC").fetchall()
-    return rows_to_jobs(rows)
+        rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC, id DESC").fetchall()
+    jobs = []
+    for row in rows:
+        item = dict(row)
+        item["match"] = item.get("match_score")
+        item["type"] = item.get("job_type") or ""
+        item["exp"] = item.get("experience") or ""
+        item["tags"] = parse_json_list(item.get("tags"))
+        jobs.append(item)
+    return jobs
 
 
-def get_profile(user_id: int | None = None) -> dict[str, Any]:
-    target_user_id = get_active_user_id(user_id)
+def latest_resume(user_id: int | None = None) -> dict[str, Any] | None:
     with get_db() as conn:
-        row = conn.execute("SELECT * FROM users WHERE id = ?", (target_user_id,)).fetchone()
-    return dict(row) if row else {}
+        row = conn.execute(
+            "SELECT * FROM resumes WHERE user_id = ? ORDER BY upload_date DESC, id DESC LIMIT 1",
+            (get_active_user_id(user_id),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def latest_analysis(user_id: int | None = None) -> dict[str, Any] | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM resume_analysis WHERE user_id = ? ORDER BY analysis_date DESC, id DESC LIMIT 1",
+            (get_active_user_id(user_id),),
+        ).fetchone()
+    if not row:
+        return None
+    item = dict(row)
+    for key in ("strengths", "weaknesses", "missing_skills", "suggestions", "recommended_roles"):
+        item[key] = parse_json_list(item.get(key))
+    return item
 
 
 def get_resume_history(limit: int = 12, user_id: int | None = None) -> list[dict[str, Any]]:
-    target_user_id = get_active_user_id(user_id)
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT * FROM resume_analyses WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
-            (target_user_id, limit),
+            """
+            SELECT ra.*, r.filename
+            FROM resume_analysis ra
+            LEFT JOIN resumes r ON r.user_id = ra.user_id
+              AND r.upload_date <= ra.analysis_date
+            WHERE ra.user_id = ?
+            GROUP BY ra.id
+            ORDER BY ra.analysis_date DESC, ra.id DESC
+            LIMIT ?
+            """,
+            (get_active_user_id(user_id), limit),
         ).fetchall()
     history = []
     for row in rows:
         item = dict(row)
-        item["matched_skills"] = json.loads(item.get("matched_skills") or "[]")
-        item["missing_skills"] = json.loads(item.get("missing_skills") or "[]")
+        for key in ("strengths", "weaknesses", "missing_skills", "suggestions", "recommended_roles"):
+            item[key] = parse_json_list(item.get(key))
         history.append(item)
     return history
 
 
-def latest_resume_score(user_id: int | None = None) -> int:
-    target_user_id = get_active_user_id(user_id)
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT score FROM resume_analyses WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
-            (target_user_id,),
-        ).fetchone()
-    return int(row["score"]) if row else 82
+def extract_resume_text(file_path: str | Path) -> str:
+    path = Path(file_path)
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        reader = PdfReader(str(path))
+        text = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+        if len(text.split()) < 40:
+            import pdfplumber
+
+            with pdfplumber.open(path) as pdf:
+                fallback_text = "\n".join(page.extract_text() or "" for page in pdf.pages).strip()
+            if len(fallback_text) > len(text):
+                text = fallback_text
+        return text
+    if suffix == ".docx":
+        from docx import Document
+
+        doc = Document(path)
+        return "\n".join(paragraph.text for paragraph in doc.paragraphs).strip()
+    raise ValueError("Unsupported resume file type.")
 
 
-def build_dashboard_stats(applications: list[dict[str, Any]], resume_score: int) -> list[dict[str, str]]:
-    total = len(applications)
-    interviews = len([app_item for app_item in applications if app_item["status"] in {"Interview Scheduled", "Technical Round", "HR Round"}])
-    selected = len([app_item for app_item in applications if app_item["status"] == "Selected"])
-    cover_letters = max(1, total // 2)
-    missing_skills = max(0, 12 - selected)
-    return [
-        {"label": "Resume Match Score", "value": f"{resume_score}%", "delta": "Latest AI analysis", "icon": "target", "tone": "indigo"},
-        {"label": "Applications Submitted", "value": str(total), "delta": "Saved in SQLite", "icon": "briefcase", "tone": "emerald"},
-        {"label": "Interviews Scheduled", "value": str(interviews), "delta": "Active pipeline", "icon": "calendar", "tone": "amber"},
-        {"label": "Skills Missing", "value": str(missing_skills), "delta": "From target roles", "icon": "circle-alert", "tone": "rose"},
-        {"label": "Cover Letters", "value": str(cover_letters), "delta": "AI-ready drafts", "icon": "pen-line", "tone": "sky"},
-    ]
-
-
-def extraction_quality_is_poor(text: str) -> bool:
-    words = text.split()
-    return len(words) < 40 or len(text.strip()) < 250
-
-
-def extract_text_from_upload(upload) -> tuple[str, str, str | None]:
+def save_uploaded_resume(upload) -> tuple[int, str, str]:
     if not upload or not upload.filename:
-        return "", "", None
-    filename = secure_filename(upload.filename)
-    if not filename:
-        return "", "", "No valid file name was found."
-    suffix = Path(filename).suffix.lower()
+        raise ValueError("Upload a PDF or DOCX resume.")
+    original = secure_filename(upload.filename)
+    suffix = Path(original).suffix.lower()
     if suffix not in ALLOWED_RESUME_EXTENSIONS:
-        return "", filename, "Please upload a PDF, DOCX, or TXT resume file."
-
-    path = UPLOAD_DIR / filename
+        raise ValueError("Please upload a PDF or DOCX resume file.")
+    stored_name = f"user-{get_active_user_id()}-{uuid.uuid4().hex}{suffix}"
+    path = UPLOAD_DIR / stored_name
     upload.save(path)
-
-    try:
-        if suffix == ".txt":
-            text = path.read_text(encoding="utf-8", errors="ignore").strip()
-            return text, filename, None if text else "Could not extract text from this file. It may be a scanned or image-based PDF."
-        if suffix == ".docx":
-            from docx import Document
-
-            doc = Document(path)
-            text = "\n".join(paragraph.text for paragraph in doc.paragraphs).strip()
-            return text, filename, None if text else "Could not extract text from this file. It may be a scanned or image-based PDF."
-        if suffix == ".pdf":
-            reader = PdfReader(str(path))
-            text = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
-            if extraction_quality_is_poor(text):
-                import pdfplumber
-
-                with pdfplumber.open(path) as pdf:
-                    fallback_text = "\n".join(page.extract_text() or "" for page in pdf.pages).strip()
-                if len(fallback_text) > len(text):
-                    text = fallback_text
-            return text, filename, None if text else "Could not extract text from this file. It may be a scanned or image-based PDF."
-    except Exception:
-        return "", filename, "Could not extract text from this file. It may be a scanned or image-based PDF."
-    return "", filename, "Please upload a PDF, DOCX, or TXT resume file."
+    text = extract_resume_text(path)
+    if not text:
+        raise ValueError("Could not extract text from this resume. Upload a text-based PDF or DOCX file.")
+    with get_db() as conn:
+        cursor = conn.execute(
+            "INSERT INTO resumes (user_id, filename, extracted_text) VALUES (?, ?, ?)",
+            (get_active_user_id(), stored_name, text),
+        )
+        resume_id = int(cursor.lastrowid)
+    return resume_id, stored_name, text
 
 
-def save_resume_analysis(analysis: dict[str, Any], filename: str, job_description: str, user_id: int | None = None) -> int:
-    target_user_id = get_active_user_id(user_id)
+def save_resume_analysis(analysis: dict[str, Any]) -> int:
     with get_db() as conn:
         cursor = conn.execute(
             """
-            INSERT INTO resume_analyses
-            (user_id, filename, score, ats_score, keyword_score, matched_skills, missing_skills, strengths, suggestions, summary, job_description_preview)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO resume_analysis
+            (user_id, resume_score, ats_score, strengths, weaknesses, missing_skills, suggestions, recommended_roles)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                target_user_id,
-                filename or "Typed resume text",
-                int(analysis["score"]),
+                get_active_user_id(),
+                int(analysis["resume_score"]),
                 int(analysis["ats_score"]),
-                int(analysis["keyword_score"]),
-                json.dumps(analysis.get("matched_skills", [])),
-                json.dumps(analysis.get("missing_skills", [])),
                 json.dumps(analysis.get("strengths", [])),
+                json.dumps(analysis.get("weaknesses", [])),
+                json.dumps(analysis.get("missing_skills", [])),
                 json.dumps(analysis.get("suggestions", [])),
-                analysis.get("summary", ""),
-                job_description.strip()[:220],
+                json.dumps(analysis.get("recommended_roles", [])),
             ),
         )
-        return int(cursor.lastrowid)
+    return int(cursor.lastrowid)
 
 
-def analyze_resume_text(resume_text: str, job_description: str, filename: str = "") -> dict[str, Any]:
-    analysis = analyze_resume_with_gemini(resume_text, job_description)
-    analysis["filename"] = filename or "Typed resume text"
-    analysis["word_count"] = len(resume_text.split())
-    return analysis
+def extract_skills_from_text(text: str, profile_skills: str = "") -> list[str]:
+    haystack = f"{text}\n{profile_skills}".lower()
+    found = {skill for skill in SKILL_TERMS if re.search(rf"(?<![\w+.#-]){re.escape(skill)}(?![\w+.#-])", haystack)}
+    for skill in re.split(r"[,;\n]", profile_skills or ""):
+        cleaned = skill.strip()
+        if cleaned:
+            found.add(cleaned.lower())
+    return sorted({skill.upper() if skill in {"sql", "aws", "gcp"} else skill.title() for skill in found})
+
+
+def profile_completion(profile: dict[str, Any], resume_row: dict[str, Any] | None, skills_found: list[str]) -> int:
+    fields = [
+        profile.get("full_name"),
+        profile.get("email"),
+        profile.get("phone"),
+        resume_row,
+        skills_found,
+        profile.get("education") or profile.get("graduation_year"),
+        profile.get("projects"),
+        profile.get("linkedin_url"),
+        profile.get("portfolio_url"),
+    ]
+    return round((sum(1 for field in fields if field) / len(fields)) * 100)
+
+
+def build_dashboard_stats(profile: dict[str, Any], resume_row: dict[str, Any] | None, analysis: dict[str, Any] | None) -> tuple[list[dict[str, str]], int, list[str]]:
+    resume_text = resume_row.get("extracted_text", "") if resume_row else ""
+    skills = extract_skills_from_text(resume_text, profile.get("skills", ""))
+    completion = profile_completion(profile, resume_row, skills)
+    stats = [
+        {"label": "Resume Score", "value": f"{analysis['resume_score']}%" if analysis else "N/A", "delta": "Latest AI analysis" if analysis else "Upload required", "icon": "target", "tone": "indigo"},
+        {"label": "ATS Score", "value": f"{analysis['ats_score']}%" if analysis else "N/A", "delta": "Latest AI analysis" if analysis else "Upload required", "icon": "scan-text", "tone": "emerald"},
+        {"label": "Skills Found", "value": str(len(skills)), "delta": "From resume and profile", "icon": "badge-check", "tone": "sky"},
+        {"label": "Missing Skills", "value": str(len(analysis["missing_skills"])) if analysis else "N/A", "delta": "From latest AI analysis" if analysis else "Upload required", "icon": "circle-alert", "tone": "rose"},
+        {"label": "Recommended Roles", "value": str(len(analysis["recommended_roles"])) if analysis else "N/A", "delta": "From latest AI analysis" if analysis else "Upload required", "icon": "briefcase-business", "tone": "amber"},
+        {"label": "Resume Upload Date", "value": resume_row["upload_date"].split(" ")[0] if resume_row else "N/A", "delta": "Latest uploaded resume" if resume_row else "Upload required", "icon": "calendar", "tone": "indigo"},
+    ]
+    return stats, completion, skills
 
 
 @app.context_processor
 def inject_layout_data():
     profile = get_profile() if DB_PATH.exists() else {}
     settings = get_settings(get_active_user_id()) if DB_PATH.exists() else {}
-    return {
-        "nav_items": NAV_ITEMS,
-        "current_year": date.today().year,
-        "profile": profile,
-        "settings": settings,
-    }
+    return {"nav_items": NAV_ITEMS, "current_year": date.today().year, "profile": profile, "settings": settings}
 
 
 @app.route("/")
 def home():
-    if current_user.is_authenticated:
-        return redirect(url_for("dashboard"))
-    return redirect(url_for("login"))
+    return redirect(url_for("dashboard" if current_user.is_authenticated else "login"))
 
 
 @app.route("/dashboard")
 @login_required
 def dashboard():
+    profile = get_profile()
+    resume_row = latest_resume()
+    analysis = latest_analysis()
+    stats, completion, skills = build_dashboard_stats(profile, resume_row, analysis)
     applications = get_applications()
-    jobs = get_jobs()
-    score = latest_resume_score()
     upcoming = [app_item for app_item in applications if app_item["status"] in {"Interview Scheduled", "Technical Round", "HR Round"}][:3]
-    suggestions = [
-        "Run a fresh Gemini resume analysis before applying to a new role.",
-        "Move active interview applications to the right tracker stage.",
-        "Generate a tailored cover letter before applying to recommended roles.",
-    ]
     return render_template(
         "dashboard.html",
         title="Dashboard",
-        stats=build_dashboard_stats(applications, score),
+        stats=stats,
         applications=applications[:5],
-        jobs=jobs[:3],
         upcoming=upcoming,
-        suggestions=suggestions,
-        latest_score=score,
+        latest_analysis=analysis,
+        latest_resume=resume_row,
+        profile_completion=completion,
+        skills_found=skills,
+        suggestions=analysis["suggestions"] if analysis else [],
+        recommended_roles=analysis["recommended_roles"] if analysis else [],
     )
 
 
@@ -329,12 +348,9 @@ def dashboard():
 def resume():
     if request.method == "POST":
         result, status = handle_resume_analysis()
-        if status != 200:
-            flash(result["error"], "error")
-        else:
-            flash("Resume analysis completed.", "success")
+        flash("Resume analysis completed." if status == 200 else result["error"], "success" if status == 200 else "error")
         return redirect(url_for("resume"))
-    return render_template("resume.html", title="Resume Analyzer", history=get_resume_history())
+    return render_template("resume.html", title="Resume Analyzer", history=get_resume_history(), latest_analysis=latest_analysis())
 
 
 @app.post("/api/resume/analyze")
@@ -345,36 +361,41 @@ def api_resume_analyze():
 
 
 def handle_resume_analysis() -> tuple[dict[str, Any], int]:
-    uploaded_text, filename, extraction_error = extract_text_from_upload(request.files.get("resume"))
-    pasted_text = request.form.get("resume_text", "").strip()
-    job_description = request.form.get("job_description", "").strip()
-    resume_text = f"{uploaded_text}\n{pasted_text}".strip()
-    if extraction_error and not pasted_text:
-        return {"ok": False, "error": extraction_error}, 400
-    if not resume_text:
-        return {"ok": False, "error": "Upload a resume file or paste resume text before analyzing."}, 400
-    if not job_description:
-        return {"ok": False, "error": "Paste Job Description before running analysis."}, 400
-
-    analysis = analyze_resume_text(resume_text, job_description, filename)
-    analysis_id = save_resume_analysis(analysis, filename, job_description)
+    try:
+        _, filename, resume_text = save_uploaded_resume(request.files.get("resume"))
+        analysis = analyze_resume(resume_text)
+        analysis_id = save_resume_analysis(analysis)
+    except (ValueError, AIError) as exc:
+        return {"ok": False, "error": str(exc)}, 400
+    except Exception as exc:
+        LOGGER.exception("Unexpected resume analysis error")
+        return {"ok": False, "error": "Resume analysis failed. Check logs for details."}, 500
     analysis["id"] = analysis_id
+    analysis["filename"] = filename
     return {"ok": True, "analysis": analysis, "history": get_resume_history()}, 200
 
 
-@app.route("/jobs")
+@app.route("/jobs", methods=["GET", "POST"])
 @login_required
 def jobs():
+    match_result = None
+    error = None
+    job_description = ""
+    if request.method == "POST":
+        job_description = request.form.get("job_description", "").strip()
+        resume_row = latest_resume()
+        if not resume_row:
+            error = "Upload your resume to receive AI-powered job matching."
+        elif not job_description:
+            error = "Paste a job description before running the matcher."
+        else:
+            try:
+                match_result = match_job_description(resume_row["extracted_text"], job_description)
+            except AIError as exc:
+                error = str(exc)
     query = request.args.get("q", "").lower()
-    job_type = request.args.get("type", "All")
-    mode = request.args.get("mode", "All")
-    filtered = [
-        job for job in get_jobs()
-        if (not query or query in job["title"].lower() or query in job["company"].lower() or any(query in tag.lower() for tag in job["tags"]))
-        and (job_type == "All" or job["type"] == job_type)
-        and (mode == "All" or job["mode"] == mode)
-    ]
-    return render_template("jobs.html", title="Job Matcher", jobs=filtered, query=query, job_type=job_type, mode=mode)
+    filtered = [job for job in get_jobs() if not query or query in job["title"].lower() or query in job["company"].lower()]
+    return render_template("jobs.html", title="Job Matcher", jobs=filtered, query=query, match_result=match_result, error=error, job_description=job_description, has_resume=latest_resume() is not None)
 
 
 @app.post("/jobs/<int:job_id>/apply")
@@ -407,7 +428,7 @@ def cover_letter():
 @login_required
 def api_cover_letter():
     letter, error = generate_cover_letter_with_gemini(request.form)
-    return jsonify({"ok": True, "letter": letter, "warning": error})
+    return jsonify({"ok": letter is not None, "letter": letter or "", "error": error})
 
 
 @app.route("/interview")
@@ -429,12 +450,7 @@ def tracker():
     selected = len(columns["Selected"])
     rejected = len(columns["Rejected"])
     total = len(applications)
-    stats = {
-        "total": total,
-        "selected": selected,
-        "pending": max(0, total - selected - rejected),
-        "success": round((selected / total) * 100) if total else 0,
-    }
+    stats = {"total": total, "selected": selected, "pending": max(0, total - selected - rejected), "success": round((selected / total) * 100) if total else 0}
     return render_template("tracker.html", title="Application Tracker", columns=columns, stats=stats, statuses=STATUSES)
 
 
@@ -444,21 +460,15 @@ def add_application():
     company = request.form.get("company", "").strip()
     role = request.form.get("role", "").strip()
     if company and role:
+        raw_score = request.form.get("match_score", "").strip()
+        match_score = int(raw_score) if raw_score.isdigit() else None
         with get_db() as conn:
             conn.execute(
                 """
                 INSERT INTO applications (user_id, company, role, status, applied_on, notes, match_score)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    get_active_user_id(),
-                    company,
-                    role,
-                    request.form.get("status", "Applied"),
-                    request.form.get("applied_on") or date.today().isoformat(),
-                    request.form.get("notes", "").strip(),
-                    int(request.form.get("match_score") or 70),
-                ),
+                (get_active_user_id(), company, role, request.form.get("status", "Applied"), request.form.get("applied_on") or date.today().isoformat(), request.form.get("notes", "").strip(), match_score),
             )
     return redirect(url_for("tracker"))
 
@@ -471,10 +481,7 @@ def update_application_status(application_id: int):
     if status not in STATUSES:
         return jsonify({"ok": False, "error": "Invalid status"}), 400
     with get_db() as conn:
-        conn.execute(
-            "UPDATE applications SET status = ? WHERE id = ? AND user_id = ?",
-            (status, application_id, get_active_user_id()),
-        )
+        conn.execute("UPDATE applications SET status = ? WHERE id = ? AND user_id = ?", (status, application_id, get_active_user_id()))
     return jsonify({"ok": True})
 
 
@@ -494,18 +501,23 @@ def profile():
             conn.execute(
                 """
                 UPDATE users
-                SET full_name = ?, email = ?, target_role = ?, graduation_year = ?, skills = ?,
-                    linkedin_url = ?, github_url = ?, resume_link = ?, updated_at = CURRENT_TIMESTAMP
+                SET full_name = ?, email = ?, phone = ?, target_role = ?, graduation_year = ?, skills = ?,
+                    education = ?, projects = ?, linkedin_url = ?, github_url = ?, portfolio_url = ?,
+                    resume_link = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 (
                     request.form.get("full_name", "").strip(),
                     request.form.get("email", "").strip(),
+                    request.form.get("phone", "").strip(),
                     request.form.get("target_role", "").strip(),
                     request.form.get("graduation_year", "").strip(),
                     request.form.get("skills", "").strip(),
+                    request.form.get("education", "").strip(),
+                    request.form.get("projects", "").strip(),
                     request.form.get("linkedin_url", "").strip(),
                     request.form.get("github_url", "").strip(),
+                    request.form.get("portfolio_url", "").strip(),
                     request.form.get("resume_link", "").strip(),
                     get_active_user_id(),
                 ),
@@ -519,15 +531,10 @@ def profile():
 @login_required
 def settings():
     if request.method == "POST":
-        update_settings(
-            request.form.get("dark_mode") == "on",
-            request.form.get("email_notifications") == "on",
-            request.form.get("gemini_api_key", ""),
-            get_active_user_id(),
-        )
+        update_settings(request.form.get("dark_mode") == "on", request.form.get("email_notifications") == "on", request.form.get("gemini_api_key", ""), get_active_user_id())
         flash("Settings saved.", "success")
         return redirect(url_for("settings"))
-    return render_template("settings.html", title="Settings", app_settings=get_settings())
+    return render_template("settings.html", title="Settings", app_settings=get_settings(get_active_user_id()))
 
 
 @app.route("/admin")
@@ -550,7 +557,9 @@ def login():
         password_hash = os.getenv("APP_PASSWORD", DEFAULT_PASSWORD_HASH)
         password = request.form.get("password", "")
         if check_password_hash(password_hash, password):
-            login_user(User(1, "Your account", ""))
+            with get_db() as conn:
+                conn.execute("INSERT OR IGNORE INTO users (id) VALUES (1)")
+            login_user(User(1, "Your account", request.form.get("email", "")))
             return redirect(request.args.get("next") or url_for("dashboard"))
         error = "Invalid password. Check APP_PASSWORD in your .env file."
     return render_template("login.html", title="Login", error=error, google_enabled=google_oauth_enabled())
@@ -561,8 +570,8 @@ def login_google():
     if not google_oauth_enabled():
         flash("Google sign-in is not configured yet. Add your Google client credentials to the environment first.", "error")
         return redirect(url_for("login"))
-    redirect_uri = url_for("google_callback", _external=True)
-    return oauth.google.authorize_redirect(redirect_uri)
+    session["oauth_state"] = uuid.uuid4().hex
+    return oauth.google.authorize_redirect(url_for("google_callback", _external=True))
 
 
 @app.route("/login/google/callback")
@@ -573,23 +582,14 @@ def google_callback():
     try:
         token = oauth.google.authorize_access_token()
     except Exception:
+        LOGGER.exception("Google sign-in failed")
         flash("Google sign-in failed. Please try again.", "error")
         return redirect(url_for("login"))
-
-    userinfo = token.get("userinfo")
-    if not userinfo:
-        userinfo = oauth.google.parse_id_token(token)
-
+    userinfo = token.get("userinfo") or oauth.google.parse_id_token(token)
     if not userinfo:
         flash("Google sign-in failed. Please try again.", "error")
         return redirect(url_for("login"))
-
-    user = upsert_google_user(
-        google_id=str(userinfo.get("sub", "")),
-        email=str(userinfo.get("email", "")),
-        full_name=str(userinfo.get("name") or userinfo.get("email", "Google User")),
-        avatar_url=str(userinfo.get("picture", "")),
-    )
+    user = upsert_google_user(str(userinfo.get("sub", "")), str(userinfo.get("email", "")), str(userinfo.get("name") or userinfo.get("email", "")), str(userinfo.get("picture", "")))
     login_user(User.from_row(user))
     return redirect(request.args.get("next") or url_for("dashboard"))
 

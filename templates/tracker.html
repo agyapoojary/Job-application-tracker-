@@ -10,12 +10,12 @@
 </section>
 <form class="panel add-application-form hidden" id="addApplicationForm" method="post" action="{{ url_for('add_application') }}">
   <div class="form-grid">
-    <label>Company<input name="company" required placeholder="e.g. Google"></label>
-    <label>Role<input name="role" required placeholder="e.g. SWE Intern"></label>
+    <label>Company<input name="company" required></label>
+    <label>Role<input name="role" required></label>
     <label>Status<select name="status">{% for status in statuses %}<option>{{ status }}</option>{% endfor %}</select></label>
     <label>Applied On<input type="date" name="applied_on"></label>
-    <label>Match Score<input type="number" name="match_score" min="0" max="100" value="70"></label>
-    <label>Notes<input name="notes" placeholder="Interview date, portal, referral..."></label>
+    <label>Match Score<input type="number" name="match_score" min="0" max="100"></label>
+    <label>Notes<input name="notes"></label>
   </div>
   <div class="form-actions"><button class="primary-btn" type="submit">Save Application</button><button class="small-btn" id="cancelAddBtn" type="button">Cancel</button></div>
 </form>

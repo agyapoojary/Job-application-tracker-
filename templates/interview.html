@@ -3,8 +3,7 @@
 <section class="page-head"><div><h1>Interview Preparation</h1><p>Practice with AI-curated questions based on target companies.</p></div></section>
 <section class="two-col narrow-left">
   <aside class="panel">
-    <h2>Readiness Score</h2>
-    <div class="donut" style="--value:72"><span>72</span></div>
+    <h2>Practice Categories</h2>
     <div class="category-list">
       {% for name in questions %}
       <a class="{% if category == name %}active{% endif %}" href="{{ url_for('interview', category=name) }}">{{ name }}<span>{{ questions[name]|length }}</span></a>

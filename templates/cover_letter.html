@@ -13,11 +13,11 @@
       <h2>Letter Inputs</h2>
       <span class="soft-badge">Gemini 2.5 Flash</span>
     </div>
-    <label>Full Name<input name="name" value="{{ form.get('name', profile.full_name or 'Aryan Kumar') }}"></label>
-    <label>Company Name<input name="company" value="{{ form.get('company', 'Google') }}"></label>
-    <label>Role<input name="role" value="{{ form.get('role', profile.target_role or 'Software Engineer Intern') }}"></label>
-    <label>Skills<input name="skills" value="{{ form.get('skills', profile.skills or 'Python, SQL, Flask, full-stack development') }}"></label>
-    <label>Achievement<textarea name="achievement">{{ form.get('achievement', 'built a recommendation engine that improved user engagement by 34%') }}</textarea></label>
+    <label>Full Name<input name="name" value="{{ form.get('name', profile.full_name or '') }}"></label>
+    <label>Company Name<input name="company" value="{{ form.get('company', '') }}"></label>
+    <label>Role<input name="role" value="{{ form.get('role', profile.target_role or '') }}"></label>
+    <label>Skills<input name="skills" value="{{ form.get('skills', profile.skills or '') }}"></label>
+    <label>Achievement<textarea name="achievement">{{ form.get('achievement', '') }}</textarea></label>
     <label>Tone<select name="tone">{% for option in ['Professional', 'Formal', 'Friendly', 'Enthusiastic'] %}<option {% if form.get('tone', 'Professional') == option %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
     <div class="form-actions">
       <button class="primary-btn" id="generateLetterBtn" type="submit"><i data-lucide="sparkles"></i>{% if generated %}Regenerate{% else %}Generate{% endif %}</button>

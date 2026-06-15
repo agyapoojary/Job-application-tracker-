@@ -1,24 +1,60 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="page-head"><div><h1>Job Matcher</h1><p>AI-matched jobs based on your resume and skills.</p></div></section>
-<form class="filter-bar" method="get">
-  <input name="q" value="{{ query }}" placeholder="Search by title, company, or skill">
-  <select name="type"><option>All</option><option {% if job_type == 'Internship' %}selected{% endif %}>Internship</option><option {% if job_type == 'Full Time' %}selected{% endif %}>Full Time</option></select>
-  <select name="mode"><option>All</option><option {% if mode == 'Remote' %}selected{% endif %}>Remote</option><option {% if mode == 'Hybrid' %}selected{% endif %}>Hybrid</option><option {% if mode == 'On-site' %}selected{% endif %}>On-site</option></select>
-  <button class="primary-btn" type="submit"><i data-lucide="search"></i>Search</button>
-</form>
-<p class="muted">{{ jobs|length }} jobs found, sorted by AI match score.</p>
-<section class="job-grid">
-  {% for job in jobs %}
-  <article class="job-card">
-    <div class="job-top"><span class="logo">{{ job.logo }}</span><span><strong>{{ job.company }}</strong><small>{{ job.mode }} - {{ job.exp }}</small></span><button class="icon-btn" type="button"><i data-lucide="bookmark"></i></button></div>
-    <h2>{{ job.title }}</h2><p class="muted">{{ job.location }} - {{ job.salary }}</p>
-    <div class="chip-row">{% for tag in job.tags %}<span>{{ tag }}</span>{% endfor %}</div>
-    <div class="job-actions">
-      <span class="match">{{ job.match }}% match</span><span class="badge">{{ job.type }}</span>
-      <form method="post" action="{{ url_for('apply_to_job', job_id=job.id) }}"><button type="submit">Apply</button></form>
-    </div>
-  </article>
-  {% endfor %}
+<section class="page-head">
+  <div>
+    <h1>Job Matcher</h1>
+    <p>Paste a job description and compare it against your latest uploaded resume.</p>
+  </div>
 </section>
+
+<section class="two-col wide-right">
+  <form class="panel" method="post">
+    <div class="panel-head">
+      <h2>Job Description</h2>
+      <span class="soft-badge">AI match</span>
+    </div>
+    <label>Paste Job Description
+      <textarea class="job-description-area" name="job_description" required>{{ job_description }}</textarea>
+    </label>
+    <button class="primary-btn" type="submit"><i data-lucide="sparkles"></i>Analyze Match</button>
+    {% if error %}<p class="inline-warning">{{ error }}</p>{% endif %}
+    {% if not has_resume %}<p class="muted form-note">Upload your resume to receive AI-powered analysis.</p>{% endif %}
+  </form>
+
+  <article class="panel">
+    <h2>Match Results</h2>
+    {% if match_result %}
+    <div class="score-gauge" style="--value:{{ match_result.match_score }}"><span>{{ match_result.match_score }}%</span></div>
+    <h3>Matched Skills</h3>
+    <div class="chip-row success-chips">{% for skill in match_result.matched_skills %}<span>{{ skill }}</span>{% else %}<span>No matched skills returned</span>{% endfor %}</div>
+    <h3>Missing Skills</h3>
+    <div class="chip-row danger-chips">{% for skill in match_result.missing_skills %}<span>{{ skill }}</span>{% else %}<span>No missing skills returned</span>{% endfor %}</div>
+    <h3>Improvement Suggestions</h3>
+    <ul class="insight-list">{% for suggestion in match_result.improvement_suggestions %}<li>{{ suggestion }}</li>{% endfor %}</ul>
+    {% else %}
+    <div class="empty-state compact-empty"><i data-lucide="briefcase-business"></i><strong>No job match yet</strong><span>Your AI comparison will appear here after analysis.</span></div>
+    {% endif %}
+  </article>
+</section>
+
+{% if jobs %}
+<section class="panel history-panel">
+  <div class="panel-head"><h2>Saved Jobs</h2></div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead><tr><th>Company</th><th>Role</th><th>Match</th><th></th></tr></thead>
+      <tbody>
+        {% for job in jobs %}
+        <tr>
+          <td>{{ job.company }}</td>
+          <td>{{ job.title }}</td>
+          <td>{% if job.match is not none %}{{ job.match }}%{% endif %}</td>
+          <td><form method="post" action="{{ url_for('apply_to_job', job_id=job.id) }}"><button class="small-btn" type="submit">Apply</button></form></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
 {% endblock %}

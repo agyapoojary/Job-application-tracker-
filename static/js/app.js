@@ -119,19 +119,17 @@ function renderAnalysis(analysis) {
   results?.classList.remove("hidden");
   setText("#analysisFilename", analysis.filename || "Typed resume text");
   setText("#atsScore", `${analysis.ats_score}%`);
-  setText("#keywordScore", `${analysis.keyword_score}%`);
-  setText("#analysisSummary", analysis.summary || "No summary returned.");
   const gauge = document.querySelector("#scoreGauge");
   if (gauge) {
-    gauge.style.setProperty("--value", analysis.score || 0);
+    gauge.style.setProperty("--value", analysis.resume_score || 0);
     const span = gauge.querySelector("span");
-    if (span) span.textContent = `${analysis.score || 0}%`;
+    if (span) span.textContent = `${analysis.resume_score || 0}%`;
   }
   setBar("#atsBar", analysis.ats_score);
-  setBar("#keywordBar", analysis.keyword_score);
-  renderChips("#matchedSkills", analysis.matched_skills, "No matched skills returned.");
   renderChips("#missingSkills", analysis.missing_skills, "No missing skills returned.");
+  renderChips("#recommendedRoles", analysis.recommended_roles, "No recommended roles returned.");
   renderList("#strengthsList", analysis.strengths);
+  renderList("#weaknessesList", analysis.weaknesses);
   renderList("#suggestionsList", analysis.suggestions);
   document.querySelector("#downloadAnalysisBtn")?.addEventListener("click", downloadAnalysis, { once: true });
   results?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -165,10 +163,10 @@ function renderHistory(history) {
   const tbody = document.querySelector("#analysisHistoryTable tbody");
   if (!tbody) return;
   tbody.innerHTML = history.map((item) => `
-    <tr data-summary="${escapeAttr(item.summary || "")}" data-matched="${escapeAttr((item.matched_skills || []).join(", "))}" data-missing="${escapeAttr((item.missing_skills || []).join(", "))}">
-      <td>${escapeHtml(item.created_at || "")}</td>
-      <td>${escapeHtml(item.filename || "Typed resume text")}</td>
-      <td><strong>${escapeHtml(String(item.score || 0))}%</strong></td>
+    <tr data-strengths="${escapeAttr((item.strengths || []).join(", "))}" data-weaknesses="${escapeAttr((item.weaknesses || []).join(", "))}" data-missing="${escapeAttr((item.missing_skills || []).join(", "))}" data-suggestions="${escapeAttr((item.suggestions || []).join(", "))}" data-roles="${escapeAttr((item.recommended_roles || []).join(", "))}">
+      <td>${escapeHtml(item.analysis_date || "")}</td>
+      <td>${escapeHtml(item.filename || "Uploaded resume")}</td>
+      <td><strong>${escapeHtml(String(item.resume_score || 0))}%</strong></td>
       <td>${escapeHtml(String(item.ats_score || 0))}%</td>
       <td><button class="small-btn view-history-btn" type="button">View Details</button></td>
     </tr>
@@ -180,10 +178,12 @@ function bindHistoryButtons() {
   document.querySelectorAll(".view-history-btn").forEach((button) => {
     button.addEventListener("click", () => {
       const row = button.closest("tr");
-      const summary = row?.dataset.summary || "No summary saved.";
-      const matched = row?.dataset.matched || "None";
+      const strengths = row?.dataset.strengths || "None";
+      const weaknesses = row?.dataset.weaknesses || "None";
       const missing = row?.dataset.missing || "None";
-      alert(`Summary:\n${summary}\n\nMatched: ${matched}\nMissing: ${missing}`);
+      const suggestions = row?.dataset.suggestions || "None";
+      const roles = row?.dataset.roles || "None";
+      alert(`Strengths: ${strengths}\nWeaknesses: ${weaknesses}\nMissing Skills: ${missing}\nSuggestions: ${suggestions}\nRecommended Roles: ${roles}`);
     });
   });
 }

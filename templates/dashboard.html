@@ -1,31 +1,87 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="page-head">
-  <div><h1>Good morning, Aryan</h1><p>Here is your job search summary for today.</p></div>
-  <div class="profile-meter"><span>Profile: 74% complete</span><div><b style="width:74%"></b></div></div>
+  <div>
+    <h1>Dashboard</h1>
+    <p>Your resume analysis updates from the data saved in SQLite.</p>
+  </div>
+  <div class="profile-meter"><span>Profile: {{ profile_completion }}% complete</span><div><b style="width:{{ profile_completion }}%"></b></div></div>
 </section>
-<section class="stat-grid">
+
+{% if not latest_resume %}
+<section class="panel empty-state">
+  <i data-lucide="upload-cloud"></i>
+  <strong>Upload your resume to receive AI-powered analysis.</strong>
+  <a class="primary-btn" href="{{ url_for('resume') }}"><i data-lucide="file-up"></i>Upload Resume</a>
+</section>
+{% else %}
+<section class="stat-grid dashboard-stat-grid">
   {% for stat in stats %}
   <article class="stat-card tone-{{ stat.tone }}">
-    <i data-lucide="{{ stat.icon }}"></i><strong class="counter" data-target="{{ stat.value|replace('%','') }}">{{ stat.value }}</strong><span>{{ stat.label }}</span><small>{{ stat.delta }}</small>
+    <i data-lucide="{{ stat.icon }}"></i>
+    {% if stat.value == 'N/A' %}
+    <strong>{{ stat.value }}</strong>
+    {% else %}
+    <strong class="counter" data-target="{{ stat.value|replace('%','') }}">{{ stat.value }}</strong>
+    {% endif %}
+    <span>{{ stat.label }}</span>
+    <small>{{ stat.delta }}</small>
   </article>
   {% endfor %}
 </section>
+
 <section class="dashboard-grid">
+  <article class="panel">
+    <h2>Resume Score</h2>
+    {% if latest_analysis %}
+    <div class="donut" style="--value:{{ latest_analysis.resume_score }}"><span>{{ latest_analysis.resume_score }}%</span></div>
+    <p class="muted center">Latest AI resume analysis</p>
+    {% else %}
+    <p class="muted">Upload your resume to receive AI-powered analysis.</p>
+    {% endif %}
+  </article>
+
+  <article class="panel">
+    <h2>Skills Found</h2>
+    <div class="chip-row">{% for skill in skills_found %}<span>{{ skill }}</span>{% else %}<span>No skills extracted yet</span>{% endfor %}</div>
+  </article>
+
+  <article class="panel">
+    <h2>Recommended Roles</h2>
+    <div class="mini-list">{% for role in recommended_roles %}<p><strong>{{ role }}</strong></p>{% else %}<p><strong>No roles yet</strong><span>Run resume analysis to generate role recommendations.</span></p>{% endfor %}</div>
+  </article>
+
   <article class="panel span-2">
     <div class="panel-head"><h2>Recent Applications</h2><a href="{{ url_for('tracker') }}">View all</a></div>
     <div class="list">
       {% for app in applications %}
       <div class="list-row">
-        <span class="logo">{{ app.company[:2].upper() }}</span><span><strong>{{ app.company }}</strong><small>{{ app.role }}</small></span>
-        <span class="badge">{{ app.status }}</span><span class="muted">{{ app.date }}</span><b>{{ app.match }}%</b>
+        <span class="logo">{{ app.company[:2].upper() }}</span>
+        <span><strong>{{ app.company }}</strong><small>{{ app.role }}</small></span>
+        <span class="badge">{{ app.status }}</span>
+        <span class="muted">{{ app.date }}</span>
+        {% if app.match_score is not none %}<b>{{ app.match_score }}%</b>{% endif %}
       </div>
+      {% else %}
+      <p class="muted">No applications saved yet.</p>
       {% endfor %}
     </div>
   </article>
-  <article class="panel"><h2>Resume Skill Match</h2><div class="donut" style="--value:{{ latest_score }}"><span>{{ latest_score }}%</span></div><p class="muted center">Latest Gemini resume analysis</p></article>
-  <article class="panel"><h2>Upcoming Interviews</h2><div class="mini-list">{% for app in upcoming %}<p><strong>{{ app.company }}</strong><span>{{ app.status }} - {{ app.date }}</span></p>{% else %}<p><strong>No interviews yet</strong><span>Move tracker cards into interview stages.</span></p>{% endfor %}</div></article>
-  <article class="panel"><h2>AI Suggestions</h2><div class="tips">{% for suggestion in suggestions %}<p>{{ suggestion }}</p>{% endfor %}</div></article>
-  <article class="panel"><div class="panel-head"><h2>Job Recommendations</h2><a href="{{ url_for('jobs') }}">See all</a></div><div class="mini-list">{% for job in jobs %}<p><strong>{{ job.company }}</strong><span>{{ job.title }} - {{ job.match }}% match</span></p>{% endfor %}</div></article>
+
+  <article class="panel">
+    <h2>Upcoming Interviews</h2>
+    <div class="mini-list">{% for app in upcoming %}<p><strong>{{ app.company }}</strong><span>{{ app.status }} - {{ app.date }}</span></p>{% else %}<p><strong>No interviews scheduled</strong><span>Interview items appear when your tracker status changes.</span></p>{% endfor %}</div>
+  </article>
+
+  <article class="panel span-2">
+    <h2>AI Resume Recommendations</h2>
+    <div class="tips">{% for suggestion in suggestions %}<p>{{ suggestion }}</p>{% else %}<p>Run a resume analysis to receive personalized recommendations.</p>{% endfor %}</div>
+  </article>
+
+  <article class="panel">
+    <h2>Missing Skills</h2>
+    <div class="chip-row danger-chips">{% for skill in latest_analysis.missing_skills %}<span>{{ skill }}</span>{% else %}<span>No missing skills returned</span>{% endfor %}</div>
+  </article>
 </section>
+{% endif %}
 {% endblock %}
