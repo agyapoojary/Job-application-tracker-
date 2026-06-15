@@ -28,7 +28,7 @@
       </nav>
       <div class="sidebar-footer">
         <button class="icon-row" id="themeToggle" type="button"><i data-lucide="moon"></i><span>Toggle theme</span></button>
-        <a class="user-row" href="{{ url_for('profile') }}"><span class="avatar">{{ (profile.full_name or 'CA')[:2].upper() }}</span><span>{{ profile.full_name or 'CareerAI User' }}<small>{{ profile.email or 'single-user mode' }}</small></span></a>
+        <a class="user-row" href="{{ url_for('profile') }}"><span class="avatar">{{ (profile.full_name or 'AC')[:2].upper() }}</span><span>{{ profile.full_name or 'Your account' }}<small>{{ profile.email or 'Signed in securely' }}</small></span></a>
         <form class="logout-form" method="post" action="{{ url_for('logout') }}">
           <button class="icon-row" type="submit"><i data-lucide="log-out"></i><span>Logout</span></button>
         </form>

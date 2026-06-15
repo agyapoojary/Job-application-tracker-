@@ -7,15 +7,16 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
-from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_login import LoginManager, UserMixin, current_user, login_required, login_user, logout_user
 from pypdf import PdfReader
 from werkzeug.security import check_password_hash
 from werkzeug.utils import secure_filename
 
 from ai import analyze_resume_with_gemini, generate_cover_letter_with_gemini
-from db import DB_PATH, STATUSES, UPLOAD_DIR, get_db, get_settings, init_db, update_settings
+from db import DB_PATH, STATUSES, UPLOAD_DIR, get_db, get_settings, get_user_by_id, init_db, update_settings, upsert_google_user
 
 
 load_dotenv()
@@ -25,6 +26,18 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_DIR
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-change-this")
 
 login_manager = LoginManager(app)
+login_manager.login_view = "login"
+login_manager.login_message = "Please sign in to continue."
+
+oauth = OAuth(app)
+oauth.register(
+    name="google",
+    client_id=os.getenv("GOOGLE_CLIENT_ID", ""),
+    client_secret=os.getenv("GOOGLE_CLIENT_SECRET", ""),
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+    client_kwargs={"scope": "openid email profile"},
+)
+
 login_manager.login_view = "login"
 login_manager.login_message = "Please sign in to continue."
 
@@ -64,13 +77,35 @@ INTERVIEW_QUESTIONS = {
 }
 
 
-class SingleUser(UserMixin):
-    id = "careerai-user"
+class User(UserMixin):
+    def __init__(self, user_id: int, full_name: str = "", email: str = "", avatar_url: str = "") -> None:
+        self.id = user_id
+        self.full_name = full_name
+        self.email = email
+        self.avatar_url = avatar_url
+
+    @classmethod
+    def from_row(cls, row: dict[str, Any] | None) -> "User | None":
+        if not row:
+            return None
+        return cls(int(row["id"]), row.get("full_name", ""), row.get("email", ""), row.get("avatar_url", ""))
 
 
 @login_manager.user_loader
-def load_user(user_id: str) -> SingleUser | None:
-    return SingleUser() if user_id == "careerai-user" else None
+def load_user(user_id: str) -> User | None:
+    return User.from_row(get_user_by_id(int(user_id)))
+
+
+def get_active_user_id(user_id: int | None = None) -> int:
+    if user_id is not None:
+        return int(user_id)
+    if current_user.is_authenticated:
+        return int(current_user.get_id())
+    return 1
+
+
+def google_oauth_enabled() -> bool:
+    return bool(os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET"))
 
 
 def rows_to_jobs(rows) -> list[dict[str, Any]]:
@@ -105,9 +140,13 @@ def row_to_application(row) -> dict[str, Any]:
     }
 
 
-def get_applications() -> list[dict[str, Any]]:
+def get_applications(user_id: int | None = None) -> list[dict[str, Any]]:
+    target_user_id = get_active_user_id(user_id)
     with get_db() as conn:
-        rows = conn.execute("SELECT * FROM applications ORDER BY applied_on DESC, id DESC").fetchall()
+        rows = conn.execute(
+            "SELECT * FROM applications WHERE user_id = ? ORDER BY applied_on DESC, id DESC",
+            (target_user_id,),
+        ).fetchall()
     return [row_to_application(row) for row in rows]
 
 
@@ -117,17 +156,19 @@ def get_jobs() -> list[dict[str, Any]]:
     return rows_to_jobs(rows)
 
 
-def get_profile() -> dict[str, Any]:
+def get_profile(user_id: int | None = None) -> dict[str, Any]:
+    target_user_id = get_active_user_id(user_id)
     with get_db() as conn:
-        row = conn.execute("SELECT * FROM users WHERE id = 1").fetchone()
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (target_user_id,)).fetchone()
     return dict(row) if row else {}
 
 
-def get_resume_history(limit: int = 12) -> list[dict[str, Any]]:
+def get_resume_history(limit: int = 12, user_id: int | None = None) -> list[dict[str, Any]]:
+    target_user_id = get_active_user_id(user_id)
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT * FROM resume_analyses ORDER BY created_at DESC, id DESC LIMIT ?",
-            (limit,),
+            "SELECT * FROM resume_analyses WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+            (target_user_id, limit),
         ).fetchall()
     history = []
     for row in rows:
@@ -138,9 +179,13 @@ def get_resume_history(limit: int = 12) -> list[dict[str, Any]]:
     return history
 
 
-def latest_resume_score() -> int:
+def latest_resume_score(user_id: int | None = None) -> int:
+    target_user_id = get_active_user_id(user_id)
     with get_db() as conn:
-        row = conn.execute("SELECT score FROM resume_analyses ORDER BY created_at DESC, id DESC LIMIT 1").fetchone()
+        row = conn.execute(
+            "SELECT score FROM resume_analyses WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+            (target_user_id,),
+        ).fetchone()
     return int(row["score"]) if row else 82
 
 
@@ -203,15 +248,17 @@ def extract_text_from_upload(upload) -> tuple[str, str, str | None]:
     return "", filename, "Please upload a PDF, DOCX, or TXT resume file."
 
 
-def save_resume_analysis(analysis: dict[str, Any], filename: str, job_description: str) -> int:
+def save_resume_analysis(analysis: dict[str, Any], filename: str, job_description: str, user_id: int | None = None) -> int:
+    target_user_id = get_active_user_id(user_id)
     with get_db() as conn:
         cursor = conn.execute(
             """
             INSERT INTO resume_analyses
-            (filename, score, ats_score, keyword_score, matched_skills, missing_skills, strengths, suggestions, summary, job_description_preview)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (user_id, filename, score, ats_score, keyword_score, matched_skills, missing_skills, strengths, suggestions, summary, job_description_preview)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                target_user_id,
                 filename or "Typed resume text",
                 int(analysis["score"]),
                 int(analysis["ats_score"]),
@@ -237,7 +284,7 @@ def analyze_resume_text(resume_text: str, job_description: str, filename: str = 
 @app.context_processor
 def inject_layout_data():
     profile = get_profile() if DB_PATH.exists() else {}
-    settings = get_settings() if DB_PATH.exists() else {}
+    settings = get_settings(get_active_user_id()) if DB_PATH.exists() else {}
     return {
         "nav_items": NAV_ITEMS,
         "current_year": date.today().year,
@@ -247,6 +294,13 @@ def inject_layout_data():
 
 
 @app.route("/")
+def home():
+    if current_user.is_authenticated:
+        return redirect(url_for("dashboard"))
+    return redirect(url_for("login"))
+
+
+@app.route("/dashboard")
 @login_required
 def dashboard():
     applications = get_applications()
@@ -331,10 +385,10 @@ def apply_to_job(job_id: int):
         if job:
             conn.execute(
                 """
-                INSERT INTO applications (company, role, status, applied_on, notes, match_score)
-                VALUES (?, ?, 'Applied', ?, 'Added from Job Matcher', ?)
+                INSERT INTO applications (user_id, company, role, status, applied_on, notes, match_score)
+                VALUES (?, ?, ?, 'Applied', ?, 'Added from Job Matcher', ?)
                 """,
-                (job["company"], job["title"], date.today().isoformat(), job["match_score"]),
+                (get_active_user_id(), job["company"], job["title"], date.today().isoformat(), job["match_score"]),
             )
     return redirect(url_for("tracker"))
 
@@ -393,10 +447,11 @@ def add_application():
         with get_db() as conn:
             conn.execute(
                 """
-                INSERT INTO applications (company, role, status, applied_on, notes, match_score)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO applications (user_id, company, role, status, applied_on, notes, match_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    get_active_user_id(),
                     company,
                     role,
                     request.form.get("status", "Applied"),
@@ -416,7 +471,10 @@ def update_application_status(application_id: int):
     if status not in STATUSES:
         return jsonify({"ok": False, "error": "Invalid status"}), 400
     with get_db() as conn:
-        conn.execute("UPDATE applications SET status = ? WHERE id = ?", (status, application_id))
+        conn.execute(
+            "UPDATE applications SET status = ? WHERE id = ? AND user_id = ?",
+            (status, application_id, get_active_user_id()),
+        )
     return jsonify({"ok": True})
 
 
@@ -424,7 +482,7 @@ def update_application_status(application_id: int):
 @login_required
 def delete_application(application_id: int):
     with get_db() as conn:
-        conn.execute("DELETE FROM applications WHERE id = ?", (application_id,))
+        conn.execute("DELETE FROM applications WHERE id = ? AND user_id = ?", (application_id, get_active_user_id()))
     return redirect(url_for("tracker"))
 
 
@@ -438,7 +496,7 @@ def profile():
                 UPDATE users
                 SET full_name = ?, email = ?, target_role = ?, graduation_year = ?, skills = ?,
                     linkedin_url = ?, github_url = ?, resume_link = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = 1
+                WHERE id = ?
                 """,
                 (
                     request.form.get("full_name", "").strip(),
@@ -449,6 +507,7 @@ def profile():
                     request.form.get("linkedin_url", "").strip(),
                     request.form.get("github_url", "").strip(),
                     request.form.get("resume_link", "").strip(),
+                    get_active_user_id(),
                 ),
             )
         flash("Profile saved.", "success")
@@ -464,6 +523,7 @@ def settings():
             request.form.get("dark_mode") == "on",
             request.form.get("email_notifications") == "on",
             request.form.get("gemini_api_key", ""),
+            get_active_user_id(),
         )
         flash("Settings saved.", "success")
         return redirect(url_for("settings"))
@@ -490,10 +550,48 @@ def login():
         password_hash = os.getenv("APP_PASSWORD", DEFAULT_PASSWORD_HASH)
         password = request.form.get("password", "")
         if check_password_hash(password_hash, password):
-            login_user(SingleUser())
+            login_user(User(1, "Your account", ""))
             return redirect(request.args.get("next") or url_for("dashboard"))
         error = "Invalid password. Check APP_PASSWORD in your .env file."
-    return render_template("login.html", title="Login", error=error)
+    return render_template("login.html", title="Login", error=error, google_enabled=google_oauth_enabled())
+
+
+@app.route("/login/google")
+def login_google():
+    if not google_oauth_enabled():
+        flash("Google sign-in is not configured yet. Add your Google client credentials to the environment first.", "error")
+        return redirect(url_for("login"))
+    redirect_uri = url_for("google_callback", _external=True)
+    return oauth.google.authorize_redirect(redirect_uri)
+
+
+@app.route("/login/google/callback")
+def google_callback():
+    if not google_oauth_enabled():
+        flash("Google sign-in is not configured yet.", "error")
+        return redirect(url_for("login"))
+    try:
+        token = oauth.google.authorize_access_token()
+    except Exception:
+        flash("Google sign-in failed. Please try again.", "error")
+        return redirect(url_for("login"))
+
+    userinfo = token.get("userinfo")
+    if not userinfo:
+        userinfo = oauth.google.parse_id_token(token)
+
+    if not userinfo:
+        flash("Google sign-in failed. Please try again.", "error")
+        return redirect(url_for("login"))
+
+    user = upsert_google_user(
+        google_id=str(userinfo.get("sub", "")),
+        email=str(userinfo.get("email", "")),
+        full_name=str(userinfo.get("name") or userinfo.get("email", "Google User")),
+        avatar_url=str(userinfo.get("picture", "")),
+    )
+    login_user(User.from_row(user))
+    return redirect(request.args.get("next") or url_for("dashboard"))
 
 
 @app.post("/logout")

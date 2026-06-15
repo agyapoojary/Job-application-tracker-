@@ -10,7 +10,7 @@
 <section class="two-col wide-right">
   <article class="panel profile-card">
     <span class="avatar large">{{ (user_profile.full_name or 'CA')[:2].upper() }}</span>
-    <h2>{{ user_profile.full_name or 'CareerAI User' }}</h2>
+    <h2>{{ user_profile.full_name or 'Your profile' }}</h2>
     <p class="muted">{{ user_profile.target_role or 'Target role not set' }}</p>
     <div class="profile-links">
       {% if user_profile.linkedin_url %}<a href="{{ user_profile.linkedin_url }}" target="_blank">LinkedIn</a>{% endif %}
@@ -20,7 +20,7 @@
   </article>
 
   <form class="panel" method="post">
-    <div class="panel-head"><h2>Edit Profile</h2><span class="soft-badge">Single-user mode</span></div>
+    <div class="panel-head"><h2>Edit Profile</h2></div>
     <div class="form-grid">
       <label>Full Name<input name="full_name" value="{{ user_profile.full_name or '' }}"></label>
       <label>Email<input type="email" name="email" value="{{ user_profile.email or '' }}"></label>
