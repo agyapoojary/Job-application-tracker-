@@ -55,3 +55,13 @@ python app.py
 Set `GEMINI_API_KEY` in `.env` or save it from the Settings page. Set `APP_PASSWORD` to a Werkzeug password hash. For local development only, the fallback password is `careerai`.
 
 Open `http://127.0.0.1:5000` in your browser.
+
+## Deploying on Vercel
+
+Vercel can detect the Flask `app` object in `app.py` from `requirements.txt`. Add these environment variables in the Vercel project settings:
+
+- `SECRET_KEY`: any long random string
+- `APP_PASSWORD`: a Werkzeug password hash for your login password
+- `GEMINI_API_KEY`: optional at startup, required for AI resume/job/cover-letter features
+
+On Vercel, SQLite data and uploads are stored in `/tmp` so the serverless function can start. That storage is temporary, so use a hosted database such as Postgres/Supabase if you need saved applications and resumes to persist across deployments or function restarts.

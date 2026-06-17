@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import sqlite3
 from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parent
-INSTANCE_DIR = BASE_DIR / "instance"
+INSTANCE_DIR = Path(os.getenv("INSTANCE_DIR", "")).expanduser() if os.getenv("INSTANCE_DIR") else BASE_DIR / "instance"
+if os.getenv("VERCEL") and not os.getenv("INSTANCE_DIR"):
+    INSTANCE_DIR = Path(tempfile.gettempdir()) / "careerai-instance"
 DB_PATH = INSTANCE_DIR / "careerai.db"
 UPLOAD_DIR = INSTANCE_DIR / "uploads"
 
